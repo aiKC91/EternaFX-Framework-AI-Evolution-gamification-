@@ -1,0 +1,491 @@
+import os  # Import os for environment variables
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, Index
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from pydantic import BaseModel, confloat
+from typing import List, Optional, Generator
+from datetime import datetime, timedelta
+from jose import jwt
+from passlib.context import CryptContext
+import random
+import math
+import numpy as np
+from openai import OpenAI, OpenAIError
+import logging
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.responses import JSONResponse
+
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- Database Configuration ---
+# Use environment variable for database URL
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/eternafx") # Default for local dev
+
+# Create SQLAlchemy engine
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+# --- Define Constants ---
+PHI = (1 + math.sqrt(5)) / 2  # Golden Ratio
+
+# --- OAuth2 Settings ---
+# Use environment variable for secret key!
+SECRET_KEY = os.environ["SECRET_KEY"] #  **Replace 'your_secret_key' and use env var in production!**
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# OAuth2 scheme and password context
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12) # Configure bcrypt rounds
+
+# --- OpenAI API Key ---
+# Use environment variable for OpenAI API Key if you intend to use OpenAI features
+openai_api_key = os.getenv("OPENAI_API_KEY") #  Optional, configure if needed
+
+# --- SQLAlchemy Models ---
+
+class User(Base):
+    """SQLAlchemy model for users table."""
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    level = Column(Integer, default=1)
+    xp = Column(Float, default=0.0)
+    total_rewards = Column(Float, default=0.0)
+
+class Scenario(Base):
+    """SQLAlchemy model for scenarios table."""
+    __tablename__ = "scenarios"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    description = Column(Text)
+    base_complexity = Column(Float, default=1.0)
+    scaling_factor = Column(Float, default=1.0)
+    outcome_value = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class UserScenarioInteraction(Base):
+    """SQLAlchemy model for user scenario interactions table."""
+    __tablename__ = "user_scenario_interactions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    scenario_id = Column(Integer, ForeignKey("scenarios.id"))
+    decision = Column(String)  # "Balanced Decision", "Adjust Ethics", etc.
+    utilitarian_score = Column(Float)
+    rule_based_score = Column(Float)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True) # Added index for timestamp
+    __table_args__ = (
+        Index('ix_user_scenario_user_scenario_id_timestamp', 'user_id', 'scenario_id', 'timestamp'),
+    )
+
+
+# --- Pydantic Models ---
+
+class UserCreate(BaseModel):
+    """Pydantic model for user creation request."""
+    username: str
+    email: str
+    password: str
+
+class Token(BaseModel):
+    """Pydantic model for token response."""
+    access_token: str
+    token_type: str
+
+class ScenarioCreate(BaseModel):
+    """Pydantic model for scenario creation request with validation."""
+    name: str
+    description: Optional[str] = None
+    base_complexity: confloat(gt=0) = 1.0 # Validated to be greater than 0
+    scaling_factor: confloat(gt=0) = 1.0  # Validated to be greater than 0
+    outcome_value: Optional[float] = 0.0
+
+class Agent(BaseModel):
+    """Pydantic model for agent representation."""
+    deontological: float
+    utilitarian: float
+
+class ScenarioResponse(BaseModel):
+    """Pydantic model for scenario response."""
+    name: str
+    description: str
+    base_complexity: float
+    scaling_factor: float
+    outcome_value: float
+
+class UserResponse(BaseModel):
+    """Pydantic model for user response."""
+    id: int
+    username: str
+    email: str
+    level: int
+    xp: float
+    total_rewards: float
+
+    class Config:
+        orm_mode = True
+
+# --- Helper Functions ---
+
+def get_db() -> Generator[Session, None, None]:
+    """Dependency to get a database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify plain password against hashed password."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    """Get hash for password."""
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create JWT access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    """Get current user from JWT token."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = {"username": username}
+    except jwt.JWTError:
+        raise credentials_exception
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+# --- Calculation Helper Functions ---
+
+def calculate_xp_gain(level: int, base_xp: float = 100.0) -> float:
+    """Calculate XP gain dynamically using PHI."""
+    return base_xp * (PHI ** level)
+
+def calculate_xp_cost(level: int, base_cost: float = 50.0) -> float:
+    """Calculate XP cost using PHI."""
+    return base_cost * (PHI ** (level - 1))
+
+def calculate_reward(level: int, base_reward: float = 10.0, multiplier: float = 1.0) -> float:
+    """Calculate rewards using PHI."""
+    return base_reward * multiplier * (PHI ** (level / 2))
+
+def calculate_complexity_penalty(level: int, base_complexity: float = 10.0) -> float:
+    """Calculate complexity penalty for higher levels."""
+    penalty = base_complexity / (PHI ** (level / 2))
+    return max(penalty, 0.01)  # Ensure penalty doesn't go below a minimum value
+
+def calculate_phi_bonus(level: int, base_bonus: float = 5.0, multiplier: float = 2.0) -> float:
+    """Calculate milestone bonus rewards using PHI."""
+    return base_bonus * (PHI ** (level / 3)) * multiplier
+
+def calculate_scaled_penalty(level: int, base_penalty: float = 10.0) -> float:
+    """Calculate penalties that decrease exponentially."""
+    return base_penalty / (PHI ** (level / 3))
+
+def calculate_milestone_phi_reward(level: int, milestone_interval: int = 5) -> float:
+    """Calculate special milestone rewards."""
+    if level % milestone_interval == 0:
+        return (10.0 * PHI ** level) * 1.5  # Assuming base reward is 10
+    return 0.0
+
+def calculate_utility(outcome_value: float, complexity: float) -> float:
+    """Calculate utility based on outcome value and scaled complexity."""
+    return round((outcome_value * complexity) / PHI, 3)
+
+def scale_complexity(base_complexity: float, factor: float) -> float:
+    """Scale complexity dynamically using PHI."""
+    return round(base_complexity * factor * PHI, 2)
+
+def is_balanced(utilitarian_score: float, rule_score: float) -> bool:
+    """Check if the decision is balanced."""
+    return abs(utilitarian_score - rule_score) <= PHI
+
+# --- Ratio Implementations ---
+
+class DARTOptimizer:
+    """Implements DART Optimizer for asset allocation."""
+    def __init__(self, initial_assets, transformation_factor=0.1, rebalancing_factor=0.2):
+        self.assets = np.array(initial_assets)
+        self.transformation_factor = transformation_factor
+        self.rebalancing_factor = rebalancing_factor
+        self.num_assets = len(initial_assets)
+
+    def rebalance_assets(self) -> np.ndarray:
+        """Rebalance assets dynamically, maintaining total at 100."""
+        change = np.random.randn(self.num_assets) * self.rebalancing_factor
+        new_assets = self.assets + change
+        new_assets = np.clip(new_assets, 0, None)  # Only clip negatives
+        # Normalize to maintain total
+        total = np.sum(new_assets)
+        if total > 0: # Avoid division by zero if all assets become zero
+            return np.round(new_assets / total * 100, 2)
+        else:
+            return np.round(new_assets, 2)
+
+
+    def transform_assets(self) -> np.ndarray:
+        """Transform assets using the DART ratio transformation factor."""
+        self.assets = self.assets * (1 + self.transformation_factor)
+        return np.round(self.assets, 2)
+
+    def optimize_allocation(self) -> np.ndarray:
+        """Perform full optimization: rebalance and transform assets."""
+        self.rebalance_assets()
+        return self.transform_assets()
+
+    def get_assets(self) -> np.ndarray:
+        """Return the current state of assets."""
+        return self.assets
+
+class YangMillsRatio:
+    """Implements Yang-Mills Ratio for agent interaction."""
+    def __init__(self, coupling_constant=1.0):
+        self.coupling_constant = coupling_constant  # Example of coupling constant from Yang-Mills theory
+
+    def calculate_interaction(self, agent1: Agent, agent2: Agent) -> float:
+        """Calculate interaction between two agents using Yang-Mills ratio."""
+        interaction_strength = self.coupling_constant * np.random.randn()  # Simulating random interaction
+        return interaction_strength
+
+class PvsNRatio:
+    """Implements P vs NP Ratio for problem-solving complexity."""
+    def __init__(self):
+        self.p = 1  # Represents polynomial time complexity
+        self.np = 2  # Non-deterministic polynomial time complexity
+
+    def solve_problem(self, problem_complexity: str) -> int:
+        """Solve the problem based on the P vs NP ratio."""
+        if problem_complexity == "hard":
+            return self.np
+        return self.p
+
+class GoldenRatio:
+    """Implements Golden Ratio application."""
+    def __init__(self):
+        self.phi = PHI  # Golden Ratio constant
+
+    def apply_golden_ratio(self, value: float) -> float:
+        """Apply the Golden Ratio to scale a value."""
+        return value * self.phi
+
+# --- FastAPI Application ---
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="EternaFX API", description="API for ethical decision-making simulations") # Added title and description for docs
+app.add_middleware(HTTPSRedirectMiddleware) # Force HTTPS
+
+# --- OAuth2 Endpoints ---
+
+@app.post("/token", response_model=Token, tags=["Authentication"])
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """OAuth2 token endpoint for user login."""
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# --- User Endpoints ---
+
+@app.post("/users/", response_model=UserResponse, status_code=status.HTTP_201_CREATED, tags=["Users"])
+def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    """Endpoint to create a new user."""
+    logger.info(f"Creating new user: {user.username}") # Log user creation
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    db_email = db.query(User).filter(User.email == user.email).first()
+    if db_email:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed_password = get_password_hash(user.password)
+    db_user = User(username=user.username, email=user.email, hashed_password=hashed_password)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.get("/users/me/", response_model=UserResponse, tags=["Users"])
+def read_users_me(current_user: User = Depends(get_current_user)):
+    """Endpoint to get details of the currently logged-in user."""
+    return current_user
+
+# --- Scenario Endpoints ---
+
+@app.post("/scenarios/",
+         response_model=ScenarioResponse,
+         status_code=status.HTTP_201_CREATED,
+         tags=["Scenarios"],
+         description="Create new ethical decision-making scenario",
+         responses={
+             400: {"description": "Scenario name already exists"}
+         })
+def create_scenario(scenario: ScenarioCreate, db: Session = Depends(get_db)):
+    """Endpoint to create a new scenario."""
+    db_scenario = db.query(Scenario).filter(Scenario.name == scenario.name).first()
+    if db_scenario:
+        raise HTTPException(status_code=400, detail="Scenario name already exists")
+    db_scenario = Scenario(**scenario.dict())
+    db.add(db_scenario)
+    db.commit()
+    db.refresh(db_scenario)
+    return db_scenario
+
+@app.get("/scenarios/{scenario_id}", response_model=ScenarioResponse, tags=["Scenarios"])
+def read_scenario(scenario_id: int, db: Session = Depends(get_db)):
+    """Endpoint to retrieve a scenario by ID."""
+    db_scenario = db.query(Scenario).filter(Scenario.id == scenario_id).first()
+    if not db_scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return db_scenario
+
+@app.get("/scenarios/", response_model=List[ScenarioResponse], tags=["Scenarios"])
+def list_scenarios(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    """Endpoint to list scenarios with pagination."""
+    scenarios = db.query(Scenario).offset(skip).limit(limit).all()
+    return scenarios
+
+@app.post("/scenarios/generate/", tags=["Scenarios"])
+async def generate_scenario_description(prompt: str):
+    """Endpoint to generate scenario description using OpenAI."""
+    if not openai_api_key:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    try:
+        client = OpenAI(api_key=openai_api_key)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return {"description": response.choices[0].message.content}
+    except OpenAIError as e:
+        logger.error(f"OpenAI API error: {e}") # Log OpenAI errors
+        raise HTTPException(status_code=500, detail="AI service unavailable")
+
+# --- Utility Endpoints (Example Usage of Helper Functions and Ratios) ---
+
+@app.get("/utility/", tags=["Utility"])
+def get_calculated_utility(outcome_value: float, complexity: float):
+    """Example endpoint to get calculated utility."""
+    utility = calculate_utility(outcome_value, complexity)
+    return {"utility": utility}
+
+@app.get("/scaled_complexity/", tags=["Utility"])
+def get_scaled_complexity_value(base_complexity: float, factor: float):
+    """Example endpoint to get scaled complexity value."""
+    scaled_comp = scale_complexity(base_complexity, factor)
+    return {"scaled_complexity": scaled_comp}
+
+@app.get("/xp_gain/", tags=["Utility"])
+def get_xp_gain_value(level: int):
+    """Example endpoint to get XP gain value."""
+    xp_gain = calculate_xp_gain(level)
+    return {"xp_gain": xp_gain}
+
+@app.get("/dart_optimization/", tags=["Utility"])
+def get_dart_optimized_assets():
+    """Example endpoint to get DART optimized assets."""
+    initial_assets = [20, 30, 50] # Example initial assets
+    optimizer = DARTOptimizer(initial_assets)
+    optimized_assets = optimizer.optimize_allocation()
+    return {"optimized_assets": optimized_assets.tolist()}
+
+@app.get("/yang_mills_interaction/", tags=["Utility"])
+def get_yang_mills_interaction_value():
+    """Example endpoint to get Yang-Mills interaction value."""
+    agent1 = Agent(deontological=0.6, utilitarian=0.4) # Example agent
+    agent2 = Agent(deontological=0.3, utilitarian=0.7) # Example agent
+    ym_ratio = YangMillsRatio()
+    interaction = ym_ratio.calculate_interaction(agent1, agent2)
+    return {"yang_mills_interaction": interaction}
+
+@app.get("/pvsn_problem_solving/", tags=["Utility"])
+def get_pvsn_problem_solving_value(problem_complexity: str):
+    """Example endpoint to get P vs NP problem-solving value."""
+    pvsn_ratio = PvsNRatio()
+    solution_value = pvsn_ratio.solve_problem(problem_complexity)
+    return {"pvsn_solution_value": solution_value}
+
+@app.get("/golden_ratio_application/", tags=["Utility"])
+def get_golden_ratio_application_value(value: float):
+    """Example endpoint to get golden ratio application value."""
+    golden_ratio = GoldenRatio()
+    scaled_value = golden_ratio.apply_golden_ratio(value)
+    return {"golden_ratio_scaled_value": scaled_value}
+
+
+# --- Test Client Example (for test_main.py - separate file) ---
+"""
+# test_main.py
+from fastapi.testclient import TestClient
+from main import app  # Assuming your main app file is named main.py
+
+client = TestClient(app)
+
+def test_user_creation():
+    response = client.post("/users/", json={
+        "username": "testuser",
+        "email": "test@example.com",
+        "password": "securepassword"
+    })
+    assert response.status_code == 201
+    assert response.json()["username"] == "testuser"
+
+def test_create_scenario():
+    response = client.post("/scenarios/", json={
+        "name": "Test Scenario",
+        "description": "A test scenario",
+        "base_complexity": 1.5,
+        "scaling_factor": 2.0
+    })
+    assert response.status_code == 201
+    assert response.json()["name"] == "Test Scenario"
+
+def test_list_scenarios():
+    response = client.get("/scenarios/")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+def test_generate_scenario_description_openai_error_handling(monkeypatch):
+    # Mock OpenAIError to test error handling
+    def mock_openai_chat_completions_create(*args, **kwargs):
+        raise OpenAIError("Mock OpenAI Error")
+    monkeypatch.setattr(OpenAI.Chat.Completions, "create", mock_openai_chat_completions_create)
+
+    response = client.post("/scenarios/generate/", params={"prompt": "Write a scenario description"})
+    assert response.status_code == 500
+    assert response.json() == {"detail": "AI service unavailable"}
+"""
