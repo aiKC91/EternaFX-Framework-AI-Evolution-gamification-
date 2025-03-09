@@ -1,0 +1,26 @@
+# File: eternafx/modules/carl_sagan.py
+from markdown import markdown
+import jupyter
+
+class ScienceCommunicationInterface:
+    def __init__(self):
+        self.cosmos_data = self._load_cosmos_legacy()
+        
+    def _load_cosmos_legacy(self):
+        return {
+            "episodes": ["The Shores of the Cosmic Ocean", "Blues for a Red Planet"],
+            "quotes": ["Billions and billions..."]
+        }
+    
+    def generate_explanation(self, concept: str):
+        """Sagan-style educational content"""
+        return markdown(f"**{concept}**: Imagine a world where...")
+    
+    def interactive_demo(self, theory: str):
+        """Jupyter notebook generation"""
+        return jupyter.new_notebook(code=f"# {theory}\nimport eternafx")
+
+# API Endpoint
+@app.post("/carl/explain")
+async def explain_concept(concept: str):
+    return ScienceCommunicationInterface().generate_explanation(concept)
