@@ -1,0 +1,55 @@
+import numpy as np
+
+import plotly.graph_objects as go
+
+from mpmath import zeta, zetazero
+
+# Define the range and resolution
+
+real_min, real_max = 0, 1
+
+imag_min, imag_max = 0, 70
+
+resolution = 50
+
+real_values = np.linspace(real_min, real_max, resolution)
+
+imag_values = np.linspace(imag_min, imag_max, resolution)
+
+real_grid, imag_grid = np.meshgrid(real_values, imag_values)
+
+zeta_values = np.zeros((resolution, resolution))
+
+for i inrange(resolution):
+
+    for j inrange(resolution):
+
+        s = complex(real_grid[i,j], imag_grid[i,j])
+
+        try:
+
+            zeta_values[i, j] = abs(zeta(s))
+
+        except:
+
+            zeta_values[i,j] = np.nan
+
+critical_zeros = zetazero(20)
+
+zero_re = [0.5] * len(critical_zeros)
+
+zero_im = [z.imag for z in critical_zeros]
+
+zero_z = [0] * len(critical_zeros)
+
+fig = go.Figure(data=[go.Surface(
+
+    x=real_values,
+
+    y=imag_values,
+
+    z=zeta_values.T,
+
+    colorscale="Viridis",
+
+    colorbar=dict(title="
