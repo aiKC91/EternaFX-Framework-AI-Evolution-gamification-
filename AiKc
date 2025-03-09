@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+EternaFX Core: Personalized Digital Brain Entity
+
+This script integrates multiple cognitive modules into a single AI entity:
+  - Cognitive Emulation Module (CEM): Simulates internal reasoning.
+  - Personality Preservation Engine (PPE): Maintains your personal tone.
+  - Memory Stream Network (MSN): Logs and semantically organizes recent thoughts.
+  - Reactive Decision Matrix (RDM): Generates immediate reactions.
+  - Creative Flow Engine (CFE): Produces creative solutions.
+  - Boundary Error Handler (BEH): Ensures outputs align with core values.
+
+Configuration is loaded dynamically from a YAML file (e.g., config.yaml).
+
+Example config.yaml:
+--------------------
+cem:
+  problem_space: "quantum_space"
+  deduction_method: "quantum_inference"
+ppe:
+  tone_style: "hopeful-dark"
+  response_flavor: "casual"
+rdm:
+  reaction_style: "high-intensity"
+cfe:
+  creative_source: "fractals"
+beh:
+  core_principles: ["empathy", "truth", "creativity"]
+--------------------
+
+Developed for Casey (Kc/Cece Clark), this framework is designed to evolve with you.
+"""
+
+import logging
+import sys
+import yaml
+import os
+import datetime
+
+# ------------------------------------------------------------
+# Global Logging Configuration
+# ------------------------------------------------------------
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("EternaFX")
+
+# ------------------------------------------------------------
+# Configuration Loader
+# ------------------------------------------------------------
+def load_config(config_path="config.yaml"):
+    default_config = {
+        "cem": {"problem_space": "quantum_space", "deduction_method": "quantum_inference"},
+        "ppe": {"tone_style": "hopeful-dark", "response_flavor": "casual"},
+        "rdm": {"reaction_style": "high-intensity"},
+        "cfe": {"creative_source": "fractals"},
+        "beh": {"core_principles": ["empathy", "truth", "creativity"]}
+    }
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                config = yaml.safe_load(f)
+            logger.info(f"Configuration loaded from {config_path}")
+            return config
+        except Exception as e:
+            logger.error(f"Failed to load config: {e}")
+            return default_config
+    else:
+        logger.warning(f"Config file {config_path} not found. Using default configuration.")
+        return default_config
+
+CONFIG = load_config()
+
+# ------------------------------------------------------------
+# 1. Cognitive Emulation Module (CEM)
+# ------------------------------------------------------------
+class CognitiveEmulationModule:
+    def __init__(self, problem_space, deduction_method):
+        self.problem_space = problem_space
+        self.deduction_method = deduction_method
+        logger.info(f"CEM initialized with problem_space={problem_space} and deduction_method={deduction_method}")
+
+    def process_thought(self, input_data):
+        """Emulates internal reasoning based on the selected deduction method."""
+        try:
+            if self.deduction_method == "fractal_computation":
+                return self.fractal_deduction(input_data)
+            elif self.deduction_method == "quantum_inference":
+                return self.quantum_deduction(input_data)
+            else:
+                return self.general_deduction(input_data)
+        except Exception as e:
+            logger.error(f"Error in processing thought: {e}")
+            return f"Error processing thought: {e}"
+
+    def fractal_deduction(self, input_data):
+        # Placeholder: Implement an actual fractal algorithm here.
+        return f"Fractal Insight on '{input_data}'"
+
+    def quantum_deduction(self, input_data):
+        # Placeholder: Integrate quantum simulation or inference logic.
+        return f"Quantum Inference on '{input_data}'"
+
+    def general_deduction(self, input_data):
+        # Standard logical processing.
+        return f"General Thought: '{input_data}'"
+
+# ------------------------------------------------------------
+# 2. Personality Preservation Engine (PPE)
+# ------------------------------------------------------------
+class PersonalityPreservationEngine:
+    def __init__(self, tone_style, response_flavor):
+        self.tone_style = tone_style
+        self.response_flavor = response_flavor
+        logger.info(f"PPE initialized with tone_style={tone_style} and response_flavor={response_flavor}")
+
+    def generate_response(self, input_prompt):
+        """
+        Generates a response that reflects your personal tone.
+        Designed to be honest, resilient, and uniquely 'you'.
+        """
+        try:
+            if self.tone_style == "hopeful-dark":
+                return f"Honestly? {input_prompt}. But like... there's always a way forward."
+            elif self.tone_style == "realistic-sarcastic":
+                return f"Well, obviously {input_prompt}—what else could be expected?"
+            else:
+                return f"{input_prompt}? Let's make it happen."
+        except Exception as e:
+            logger.error(f"Error generating personality response: {e}")
+            return f"Error generating response: {e}"
+
+# ------------------------------------------------------------
+# 3. Memory Stream Network (MSN) with Semantic Memory
+# ------------------------------------------------------------
+class MemoryStreamNetwork:
+    def __init__(self):
+        # Each memory is stored as a dict with content and metadata.
+        self.memory = []
+        logger.info("MSN initialized.")
+
+    def log_memory(self, thought):
+        """Stores a new thought along with a timestamp."""
+        try:
+            entry = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "content": thought
+                # Future enhancement: Add semantic tags or context.
+            }
+            self.memory.append(entry)
+            logger.debug(f"Logged memory: {entry}")
+        except Exception as e:
+            logger.error(f"Error logging memory: {e}")
+
+    def recall_memory(self, count=5):
+        """Recalls the last 'count' memories."""
+        try:
+            return self.memory[-count:] if len(self.memory) >= count else self.memory
+        except Exception as e:
+            logger.error(f"Error recalling memory: {e}")
+            return []
+
+    def summarize_memory(self):
+        """Creates a summary of recent memories for contextual continuity."""
+        try:
+            recalled = self.recall_memory()
+            summary = " | ".join(f"{m['timestamp']}: {m['content']}" for m in recalled)
+            return summary
+        except Exception as e:
+            logger.error(f"Error summarizing memory: {e}")
+            return ""
+
+# ------------------------------------------------------------
+# 4. Reactive Decision Matrix (RDM)
+# ------------------------------------------------------------
+class ReactiveDecisionMatrix:
+    def __init__(self, reaction_style):
+        self.reaction_style = reaction_style
+        logger.info(f"RDM initialized with reaction_style={reaction_style}")
+
+    def generate_reaction(self, event):
+        """Generates an immediate reaction based on your response style."""
+        try:
+            if self.reaction_style == "high-intensity":
+                return f"WOAH. {event} really shook things up!"
+            elif self.reaction_style == "cold-logical":
+                return f"Analyzing {event}... outcome is as expected."
+            else:
+                return f"Interesting... {event} has some nuance."
+        except Exception as e:
+            logger.error(f"Error generating reaction: {e}")
+            return f"Error generating reaction: {e}"
+
+# ------------------------------------------------------------
+# 5. Creative Flow Engine (CFE)
+# ------------------------------------------------------------
+class CreativeFlowEngine:
+    def __init__(self, creative_source):
+        self.creative_source = creative_source
+        logger.info(f"CFE initialized with creative_source={creative_source}")
+
+    def generate_solution(self, problem):
+        """Generates creative solutions based on your preferred inspiration."""
+        try:
+            if self.creative_source == "fractals":
+                return f"Fractal-sourced solution for '{problem}': Look for self-similarity patterns."
+            elif self.creative_source == "quantum-interference":
+                return f"Quantum-inspired solution for '{problem}': Consider superposition states."
+            else:
+                return f"Conventional solution for '{problem}': Apply standard methods."
+        except Exception as e:
+            logger.error(f"Error generating creative solution: {e}")
+            return f"Error generating solution: {e}"
+
+# ------------------------------------------------------------
+# 6. Boundary Error Handler (BEH)
+# ------------------------------------------------------------
+class BoundaryErrorHandler:
+    def __init__(self, core_principles):
+        self.core_principles = core_principles
+        logger.info(f"BEH initialized with core_principles={self.core_principles}")
+
+    def validate_output(self, ai_output):
+        """
+        Checks whether the AI output reflects core principles.
+        If a principle is missing, a warning is appended.
+        """
+        try:
+            for principle in self.core_principles:
+                if principle.lower() not in ai_output.lower():
+                    logger.warning(f"Output may not fully reflect the core principle '{principle}'.")
+                    return f"WARNING: Output may not fully reflect the core principle '{principle}'."
+            return ai_output
+        except Exception as e:
+            logger.error(f"Error in output validation: {e}")
+            return f"Error validating output: {e}"
+
+# ------------------------------------------------------------
+# 7. EternaFX Entity (Integration Layer)
+# ------------------------------------------------------------
+class EternaFXEntity:
+    def __init__(self, config):
+        try:
+            self.CEM = CognitiveEmulationModule(
+                problem_space=config["cem"]["problem_space"],
+                deduction_method=config["cem"]["deduction_method"]
+            )
+            self.PPE = PersonalityPreservationEngine(
+                tone_style=config["ppe"]["tone_style"],
+                response_flavor=config["ppe"]["response_flavor"]
+            )
+            self.MSN = MemoryStreamNetwork()
+            self.RDM = ReactiveDecisionMatrix(
+                reaction_style=config["rdm"]["reaction_style"]
+            )
+            self.CFE = CreativeFlowEngine(
+                creative_source=config["cfe"]["creative_source"]
+            )
+            self.BEH = BoundaryErrorHandler(
+                core_principles=config["beh"]["core_principles"]
+            )
+            logger.info("EternaFXEntity initialized successfully.")
+        except Exception as e:
+            logger.critical(f"Failed to initialize EternaFXEntity: {e}")
+            sys.exit(1)
+
+    def process_input(self, input_data):
+        """
+        Processes the input through multiple stages:
+          1. Cognitive processing to generate a thought.
+          2. Logs the thought into memory.
+          3. Generates a personality-driven response.
+          4. Validates the response against core values.
+          5. Generates an immediate reaction.
+          6. Optionally produces a creative solution.
+          7. Provides a summary of recent memories.
+        """
+        try:
+            # 1. Cognitive processing
+            thought = self.CEM.process_thought(input_data)
+            self.MSN.log_memory(thought)
+            
+            # 2. Generate a personality-infused response
+            raw_response = self.PPE.generate_response(thought)
+            validated_response = self.BEH.validate_output(raw_response)
+            
+            # 3. Generate a reactive decision
+            reaction = self.RDM.generate_reaction(input_data)
+            
+            # 4. Optionally generate a creative solution for additional insight
+            creative_solution = self.CFE.generate_solution(input_data)
+            
+            return {
+                "thought": thought,
+                "response": validated_response,
+                "reaction": reaction,
+                "creative_solution": creative_solution,
+                "memory_summary": self.MSN.summarize_memory()
+            }
+        except Exception as e:
+            logger.error(f"Error processing input: {e}")
+            return {"error": f"Error processing input: {e}"}
+
+# ------------------------------------------------------------
+# Main Execution: Interactive Loop
+# ------------------------------------------------------------
+def main():
+    ai_entity = EternaFXEntity(CONFIG)
+    print("Welcome to EternaFX Core - Your Personal Digital Brain (Casey/Kc/Cece Clark)")
+    
+    while True:
+        try:
+            user_input = input("\nEnter your query or thought (type 'exit' to quit): ")
+            if user_input.lower() == "exit":
+                print("Goodbye! Keep growing and keep pushing forward.")
+                break
+            
+            # Process the user input through the integrated EternaFX entity
+            output = ai_entity.process_input(user_input)
+            
+            print("\n--- EternaFX Entity Output ---")
+            print(f"Thought: {output.get('thought', 'N/A')}")
+            print(f"Response: {output.get('response', 'N/A')}")
+            print(f"Reaction: {output.get('reaction', 'N/A')}")
+            print(f"Creative Solution: {output.get('creative_solution', 'N/A')}")
+            print(f"Recent Memory: {output.get('memory_summary', 'N/A')}")
+        except KeyboardInterrupt:
+            print("\nInterrupted by user. Exiting...")
+            break
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+            print(f"An error occurred: {e}")
+
+if __name__ == "__main__":
+    main()
