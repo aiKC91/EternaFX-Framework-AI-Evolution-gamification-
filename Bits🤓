@@ -1,0 +1,18 @@
+import cirq
+
+# Create a quantum circuit with 2 qubits
+qubits = [cirq.GridQubit(i, 0) for i in range(2)]
+circuit = cirq.Circuit()
+
+# Apply Hadamard gate to the first qubit to create superposition
+circuit.append(cirq.H(qubits[0]))
+
+# Apply CNOT gate to create entanglement
+circuit.append(cirq.CNOT(qubits[0], qubits[1]))
+
+# Simulate the circuit
+simulator = cirq.Simulator()
+result = simulator.simulate(circuit)
+
+# Output the final state vector (wavefunction)
+result.final_state_vector
