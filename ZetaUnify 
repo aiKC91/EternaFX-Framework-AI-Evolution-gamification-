@@ -1,0 +1,57 @@
+import numpy as np
+import plotly.graph_objects as go
+from mpmath import zetazero, zeta
+
+# High-density sampling grid
+re_values = np.linspace(0.4, 0.6, 400)
+im_values = np.linspace(0, 50, 1000)
+real_grid, imag_grid = np.meshgrid(re_values, im_values)
+
+# Calculate zeta values over the mesh grid
+zeta_values = np.zeros_like(real_grid, dtype=np.float64)
+for i in range(real_grid.shape[0]):
+    for j in range(real_grid.shape[1]):
+        s = complex(real_grid[i, j], imag_grid[i, j])
+        zeta_values[i, j] = abs(zeta(s))
+
+# Extract critical zeros
+critical_zeros = zetazero(100)
+zero_re = [0.5] * len(critical_zeros)
+zero_im = [z.imag for z in critical_zeros]
+zero_z = [0] * len(critical_zeros)
+
+# Build 3D surface plot
+fig = go.Figure(data=[
+    go.Surface(
+        x=real_grid,
+        y=imag_grid,
+        z=zeta_values,
+        colorscale="Viridis",
+        opacity=0.85
+    )
+])
+
+# Overlay critical zeros as points
+fig.add_trace(go.Scatter3d(
+    x=zero_re,
+    y=zero_im,
+    z=zero_z,
+    mode='markers',
+    marker=dict(size=5, color='red', symbol='circle'),
+    name="Critical Zeros"
+))
+
+# Enhance layout and perspective
+fig.update_layout(
+    title="High-Resolution Zeta Function Dynamics (EternaFX Imagine)",
+    scene=dict(
+        xaxis_title="Re(s)",
+        yaxis_title="Im(s)",
+        zaxis_title="|ζ(s)|",
+        camera=dict(eye=dict(x=1.5, y=1.5, z=0.5))
+    ),
+    margin=dict(l=0, r=0, t=40, b=0)
+)
+
+# Render the visualization
+fig.show()
