@@ -1,0 +1,438 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, Enum, Date, Float, JSON, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from pydantic import BaseModel, Field
+from typing import List, Optional, Union
+import asyncio
+import websockets
+import json
+import time
+import random
+import numpy as np
+import openai
+from concurrent.futures import ThreadPoolExecutor
+from loguru import logger
+from datetime import datetime, timedelta
+from enum import Enum
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.websockets import WebSocketState
+from jose import JWTError, jwt
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from cryptography.fernet import Fernet
+import uvicorn
+from wikipedia import page as wikipedia_page  # Import Wikipedia API
+import math
+import requests
+from bs4 import BeautifulSoup
+
+# Replace with your actual OpenAI API key
+openai.api_key = "YOUR_OPENAI_API_KEY"
+
+# Generate a strong encryption key
+fernet_key = Fernet.generate_key()
+cipher_suite = Fernet(fernet_key)
+
+app = FastAPI()
+
+# CORS configuration (adjust origins as needed)
+origins = ["http://localhost:3000", "https://your-frontend-domain.com"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Database Setup
+DATABASE_URL = "postgresql://your_user:your_password@your_host/eternafx_db"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# --- Database Models ---
+
+# User Model
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    level = Column(Integer, default=1)  # User's current level
+
+# Scenario Model
+class Scenario(Base):
+    __tablename__ = "scenarios"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    description = Text
+    difficulty = Column(Integer)
+    category = Column(String)  # e.g., "Environmental Ethics", "Bioethics"
+    learning_objectives = Column(Text)  # List of learning objectives
+    created_by = Column(Integer, ForeignKey("users.id"))
+    complexity = Column(Float)  # Calculated using Golden Ratio principles
+
+# User Scenario Progress Model
+class UserScenarioProgress(Base):
+    __tablename__ = "user_scenario_progress"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    scenario_id = Column(Integer, ForeignKey("scenarios.id"))
+    score = Column(Integer)
+    completion_time = Column(Integer)
+    feedback = Column(Text)
+    physiological_data = Column(JSON)
+    music_played = Column(String)  # Store the ID or name of the music played during the scenario
+
+# ResearchArea Model
+class ResearchArea(Base):
+    __tablename__ = "research_areas"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True)
+    parent_area_id = Column(Integer, ForeignKey("research_areas.id"), nullable=True)
+
+# SubsystemState Model
+class SubsystemState(Base):
+    __tablename__ = "subsystem_states"
+    id = Column(Integer, primary_key=True, index=True)
+    subsystem_name = Column(String)
+    status = Column(String)
+    progress = Column(Float)
+    message = Column(Text)
+    last_updated = Column(DateTime, default=datetime.utcnow())
+
+# SubsystemHistory Model
+class SubsystemHistory(Base):
+    __tablename__ = "subsystem_history"
+    id = Column(Integer, primary_key=True, index=True)
+    subsystem_name = Column(String)
+    timestamp = Column(DateTime)
+    data = Column(JSON)
+
+# Breakthrough Model
+class Breakthrough(Base):
+    __tablename__ = "breakthroughs"
+    id = Column(Integer, primary_key=True, index=True)
+    subsystem_name = Column(String)
+    timestamp = Column(DateTime)
+    description = Column(Text)
+    impact_score = Column(Float)  # 0-1 representing potential impact
+    research_area_id = Column(Integer, ForeignKey("research_areas.id"))
+
+# Dependency Injection for database sessions
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# OAuth2 settings
+SECRET_KEY = "your_secret_key"  # Replace with a strong, securely generated secret key
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# --- User Authentication ---
+
+# (Authentication code remains largely the same)
+# ... (Functions: create_access_token, get_current_active_user, get_user, create_user, verify_password, get_password_hash, authenticate_user, token, create_user)
+
+# --- Subsystem Definitions ---
+
+class Subsystem:
+    """Base class for all EternaFX subsystems."""
+
+    def __init__(self, name, config, db):
+        self.name = name
+        self.config = config
+        self.db = db
+        self.state = SubsystemState(name=self.name, status="idle")
+        self.db.add(self.state)
+        self.db.commit()
+        self.history =
+
+    def update(self):
+        """
+        Implement the logic for the subsystem's update cycle.
+        This method should be overridden in each specific subsystem class.
+        """
+        raise NotImplementedError
+
+    def get_state(self):
+        """
+        Returns the current state of the subsystem.
+        """
+        return self.state
+
+    def log_history(self, data):
+        """
+        Logs subsystem history to the database.
+        """
+        history_entry = SubsystemHistory(
+            subsystem_name=self.name,
+            timestamp=datetime.now(),
+            data=data,
+        )
+        self.db.add(history_entry)
+        self.db.commit()
+
+    def get_config(self, key: str, default: any = None):
+        """
+        Safely retrieves a configuration value.
+        """
+        return self.config.get(key, default)
+
+class AIInnovators(Subsystem):
+    """
+    AI Innovators subsystem, responsible for AI research and development.
+    """
+
+    def __init__(self, name, config, db):
+        super().__init__(name, config, db)
+        self.innovation_rate = self.get_config("innovation_rate", 0.9)
+        self.research_focus = (
+            self.db.query(ResearchArea)
+            .filter(ResearchArea.name == "Deep Learning")
+            .first()
+        )
+        self.research_progress = 0.0
+        self.breakthrough_probability = self.get_config(
+            "breakthrough_probability", 0.1
+        )
+        self.disruption_probability = self.get_config(
+            "disruption_probability", 0.02
+        )
+        self.funding_level = self.get_config("funding_level", 1.0)
+        self.research_budget = self.get_config("research_budget", 1000000)
+        self.research_personnel = self.get_config("research_personnel", 1000)
+        self.research_papers_published = 0
+        self.recent_breakthroughs =
+        self.research_papers =
+
+    def update(self):
+        try:
+            # 1. Funding Adjustments
+            funding_change = random.uniform(-0.05, 0.05)
+            self.funding_level += funding_change
+            self.funding_level = max(0.1, min(1.5, self.funding_level))
+
+            # 2. Research & Development
+            research_speed = (
+                self.innovation_rate
+                * self.funding_level
+                * (self.research_personnel / 1000)
+            )
+            self.research_progress += research_speed * random.uniform(0.8, 1.2)
+            self.update_state(
+                status="researching",
+                progress=self.research_progress,
+                message=f"Researching: {self.research_focus.name} | Funding: {self.funding_level:.2f} | Researchers: {self.research_personnel}",
+            )
+
+            # 3. Breakthrough Check
+            if random.random() < self.breakthrough_probability * self.funding_level:
+                # Simulate a research breakthrough
+                breakthrough_options = [
+                    "New Deep Learning Algorithm",
+                    "Advancement in Natural Language Processing",
+                    "Breakthrough in Robotics",
+                    "AI-powered Drug Discovery",
+                    "AI-driven Climate Change Solutions",
+                    "Quantum Computing Advancements",
+                ]
+                breakthrough = random.choice(breakthrough_options)
+                self.update_state(
+                    status="breakthrough",
+                    progress=1.0,
+                    message=f"Breakthrough achieved: {breakthrough}",
+                )
+
+                # Create a new Breakthrough record
+                new_breakthrough = Breakthrough(
+                    subsystem_name=self.name,
+                    timestamp=datetime.now(),
+                    description=breakthrough,
+                    impact_score=random.uniform(0.5, 1.0),
+                    research_area_id=self.research_focus.id,
+                )
+                self.db.add(new_breakthrough)
+                self.db.commit()
+
+                # Potentially shift research focus based on breakthrough
+                if breakthrough == "New Deep Learning Algorithm":
+                    potential_new_focus = (
+                        self.db.query(ResearchArea)
+                        .filter(ResearchArea.name == "Computer Vision")
+                        .first()
+                    )
+                    if random.random() < 0.5:  # 50% chance of shifting focus
+                        self.research_focus = potential_new_focus
+
+                # Update recent breakthroughs
+                self.recent_breakthroughs.append(breakthrough)
+                if len(self.recent_breakthroughs) > 5:
+                    self.recent_breakthroughs.pop(0)
+
+            # 4. Handle potential disruptions
+            if random.random() < self.disruption_probability:
+                self.update_state(
+                    status="disrupted",
+                    progress=self.research_progress,
+                    message="Research disrupted by unexpected event.",
+                )
+                # Log the disruption event
+                self.log_history(
+                    {"event": "disruption", "description": "Unexpected research disruption."}
+                )
+
+        except Exception as e:
+            logger.error(f"Error in AI Innovators subsystem: {e}")
+            self.update_state(status="error", message=str(e))
+
+# ... (Other Subsystems: ResourceManagement, SocialEconomicSystems, etc.)
+
+class ResourceManagement(Subsystem):
+    """
+    Subsystem for managing resources within the simulation.
+    """
+
+    def __init__(self, name, config, db):
+        super().__init__(name, config, db)
+        self.resource_levels = {
+            "energy": self.get_config("initial_energy", 1000),
+            "materials": self.get_config("initial_materials", 500),
+            "population": self.get_config("initial_population", 1000000),
+        }
+        self.consumption_rate = self.get_config("consumption_rate", 0.01)
+        self.production_rate = self.get_config("production_rate", 0.005)
+
+    def update(self):
+        try:
+            # Resource Consumption
+            for resource in self.resource_levels:
+                self.resource_levels[resource] -= (
+                    self.resource_levels[resource] * self.consumption_rate
+                )
+
+            # Resource Production (example - very basic)
+            self.resource_levels["energy"] += (
+                self.resource_levels["energy"] * self.production_rate
+            )
+
+            # Ensure resources don't go below zero
+            for resource in self.resource_levels:
+                self.resource_levels[resource] = max(0, self.resource_levels[resource])
+
+            self.update_state(
+                status="managing resources",
+                message=f"Energy: {self.resource_levels['energy']:.2f}, Materials: {self.resource_levels['materials']:.2f}, Population: {self.resource_levels['population']:.2f}",
+            )
+            self.log_history({"resources": self.resource_levels})
+
+        except Exception as e:
+            logger.error(f"Error in ResourceManagement subsystem: {e}")
+            self.update_state(status="error", message=str(e))
+
+# --- EternaFX System ---
+
+class EternaFXSystem:
+    def __init__(self, db):
+        self.config = {
+            "AIInnovators": {
+                "innovation_rate": 0.9,
+                "breakthrough_probability": 0.1,
+                "disruption_probability": 0.02,
+                "funding_level": 1.0,
+                "research_budget": 1000000,
+                "research_personnel": 1000,
+            },
+            "ResourceManagement": {
+                "initial_energy": 1000,
+                "initial_materials": 500,
+                "initial_population": 1000000,
+                "consumption_rate": 0.01,
+                "production_rate": 0.005,
+            },
+            # ... (Configurations for other subsystems)
+        }
+        self.db = db
+        self.subsystems = {
+            "AIInnovators": AIInnovators("AIInnovators", self.config["AIInnovators"], self.db),
+            "ResourceManagement": ResourceManagement("ResourceManagement", self.config["ResourceManagement"], self.db),
+            # ... (Instantiate other subsystems here)
+        }
+
+    def update(self):
+        for subsystem_name, subsystem in self.subsystems.items():
+            subsystem.update()
+
+# --- Scenario Generation with Golden Ratio ---
+
+def calculate_scenario_complexity(base_complexity: float, level: int) -> float:
+    """
+    Calculates scenario complexity based on the Golden Ratio and user level.
+
+    Args:
+        base_complexity: The base complexity of the initial scenario.
+        level: The user's current level.
+
+    Returns:
+        The calculated scenario complexity.
+    """
+    golden_ratio = (1 + math.sqrt(5)) / 2
+    complexity = base_complexity * (golden_ratio ** level)
+    return complexity
+
+# --- Storyteller Class (with Fact-Checking) ---
+
+class Storyteller:
+    """
+    Class responsible for generating narrative text based on user prompts and world context.
+    """
+
+    def __init__(self, config):
+        self.config = config
+
+    def generate_response(self, prompt, world_context=None):
+        """
+        Generates a narrative text response based on the prompt and world context.
+        Performs basic fact verification using Wikipedia API.
+        """
+
+        # Fact-checking using Wikipedia API
+        facts_to_check =# Identify potential facts in the prompt
+        try:
+            response = openai.Completion.create(
+                engine="text-davinci-003",
+                prompt=prompt,
+                max_tokens=150,
+                n=1,
+                stop=None,
+                temperature=0.7,
+            )
+            generated_text = response.choices[0].text.strip()
+        except openai.error.OpenAIError as e:
+            logger.error(f"OpenAI API Error: {e}")
+            return "Error: Could not generate response."
+
+        for word in generated_text.split():
+            if not word.isalnum():
+                continue
+            try:
+                page = wikipedia_page(word)
+                facts_to_check.append(word)
+            except wikipedia.exceptions.DisambiguationError:
+                pass  # Handle disambiguation errors gracefully
+            except wikipedia.exceptions.PageError:
+                pass
+
+        # If facts were identified, verify them with Wikipedia
+        if facts_to_check:
+            verification
