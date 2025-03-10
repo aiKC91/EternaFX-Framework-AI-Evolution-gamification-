@@ -1,0 +1,33 @@
+import os
+
+# Creating the EternaFX Millennium Prize Rewards System structure
+
+base_path = "/mnt/data/EternaFX_Millennium_Prize_Reward_System"
+
+directories = [
+    "contracts",  # Smart Contracts for rewards
+    "verification",  # AI Verification Pipelines
+    "gamification",  # XP, Legacy, Reward system
+    "publications",  # Announcements and historical archives
+    "blockchain_link",  # Transaction link to Clay Mathematics Institute
+]
+
+# Create the directories
+for directory in directories:
+    os.makedirs(os.path.join(base_path, directory), exist_ok=True)
+
+# Create a README for each section
+readme_content = {
+    "contracts": "# Smart Contracts\nThis folder contains the smart contracts for the reward claim.",
+    "verification": "# AI Verification\nThis folder contains verification pipelines for solution proof.",
+    "gamification": "# Gamification\nThis folder contains XP and Legacy reward mechanics.",
+    "publications": "# Publications\nThis folder records all solved problems and announcements.",
+    "blockchain_link": "# Blockchain Link\nThis folder will store the CMI reward transaction link."
+}
+
+# Write README files
+for directory, content in readme_content.items():
+    with open(os.path.join(base_path, directory, "README.md"), "w") as file:
+        file.write(content)
+
+base_path
