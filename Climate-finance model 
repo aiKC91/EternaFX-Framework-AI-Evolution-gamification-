@@ -1,0 +1,140 @@
+# Add to imports
+from matplotlib.animation import FuncAnimation
+from IPython.display import HTML
+
+# Add to ClimateFinanceDashboard class
+class ClimateFinanceDashboard:
+    def __init__(self):
+        self.fig, self.axs = plt.subplots(2, 2, figsize=(16, 10))
+        self.animation = None
+        
+    def _init_animation(self):
+        """Initialize animation elements"""
+        for ax in self.axs.flatten():
+            ax.clear()
+            ax.grid(True)
+        return self.axs.flatten()
+
+    def _update_animation(self, frame):
+        """Update frame for animation"""
+        current_year = 2025 + frame
+        for ax in self.axs.flatten():
+            ax.clear()
+            
+        # Plot temperature projections
+        for idx, (name, data) in enumerate(self.scenario_results.items()):
+            temps = np.clip([d['climate']['Temperature'].values[:frame+1] 
+                           for d in data], 1.0, 15.0)
+            
+            self.axs[0,0].plot(
+                self.years[:frame+1], 
+                np.median(temps, axis=0),
+                label=name,
+                color=['green', 'red'][idx]
+            )
+            self.axs[0,0].fill_between(
+                self.years[:frame+1],
+                np.percentile(temps, 5, axis=0),
+                np.percentile(temps, 95, axis=0),
+                alpha=0.1,
+                color=['green', 'red'][idx]
+            )
+        
+        # Plot carbon prices
+        for idx, (name, data) in enumerate(self.scenario_results.items()):
+            prices = np.clip([d['market']['Carbon_Price'].values[:frame+1] 
+                            for d in data], 0, 1000)
+            
+            self.axs[0,1].plot(
+                self.years[:frame+1],
+                np.median(prices, axis=0),
+                color=['green', 'red'][idx],
+                label=name
+            )
+            
+        # Plot green returns progression
+        for idx, (name, data) in enumerate(self.scenario_results.items()):
+            returns = np.nan_to_num(
+                [np.clip(d['market']['Green_Returns'].values[:frame+1], 0.1, 1000) 
+                 for d in data],
+                posinf=1000, neginf=0.01
+            )
+            
+            self.axs[1,0].plot(
+                self.years[:frame+1],
+                np.median(returns, axis=0),
+                color=['green', 'red'][idx],
+                label=name
+            )
+            
+        # Update risk metrics
+        risk_metrics = []
+        for name, data in self.scenario_results.items():
+            final_temps = np.clip([d['climate']['Temperature'].values[frame] 
+                                 for d in data], 1.0, 15.0)
+            final_returns = np.clip([d['market']['Green_Returns'].values[frame] 
+                                   for d in data], 0.01, 1000)
+            
+            risk_metrics.append({
+                'Scenario': name,
+                'P(>2C)': np.mean(final_temps > 2),
+                'Green Return 5%': np.percentile(final_returns, 5),
+                'Carbon Price Vol': np.std([np.clip(d['market']['Carbon_Price'].values[frame], 0, 1000) 
+                                      for d in data])
+            })
+            
+        pd.DataFrame(risk_metrics).plot.bar(x='Scenario', ax=self.axs[1,1], rot=45)
+        
+        # Add year annotation
+        for ax in self.axs.flatten():
+            ax.text(0.95, 0.95, f'Year: {current_year}', 
+                   transform=ax.transAxes, ha='right', va='top',
+                   bbox=dict(facecolor='white', alpha=0.8))
+            
+        # Set titles and labels
+        self.axs[0,0].set_title('Temperature Projections (Capped at 15°C)')
+        self.axs[0,1].set_title('Carbon Price Trajectories (Max $1000/t)')
+        self.axs[1,0].set_title('Green Returns Progression (Log Scale)')
+        self.axs[1,1].set_title('Risk Metrics Comparison')
+        
+        self.axs[1,0].set_yscale('log')
+        self.axs[0,0].legend()
+        
+        return self.axs.flatten()
+
+    def create_animation(self, scenario_results):
+        """Create animated visualization"""
+        self.scenario_results = scenario_results
+        self.years = list(scenario_results.values())[0][0]['climate']['Year']
+        
+        # Create animation
+        self.animation = FuncAnimation(
+            self.fig,
+            self._update_animation,
+            init_func=self._init_animation,
+            frames=len(self.years),
+            interval=100,
+            blit=False
+        )
+        
+        return HTML(self.animation.to_jshtml())
+    
+    def plot_scenario_comparison(self, results):
+        """Existing static plot method"""
+        # ... (keep previous static plot implementation)
+
+# Update execution block
+if __name__ == "__main__":
+    engine = ScenarioEngine()
+    dashboard = ClimateFinanceDashboard()
+    
+    # Run scenarios with reduced simulations for animation
+    scenarios = ['NetZero2040', 'BusinessAsUsual']
+    results = {name: engine.run(name, n_sims=20) for name in scenarios}  # Reduced to 20 sims
+    
+    # Create and display animation
+    anim = dashboard.create_animation(results)
+    display(anim)
+    
+    # Generate static dashboard
+    dashboard.plot_scenario_comparison(results)
