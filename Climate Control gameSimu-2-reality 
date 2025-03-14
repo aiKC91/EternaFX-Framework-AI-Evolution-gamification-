@@ -1,0 +1,37 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Define time range (years)
+years = np.linspace(2025, 2100, 100)
+
+# Define climate trajectories based on different scenarios
+def climate_projection(years, rate, feedback):
+    """Simulates temperature increase based on emission rates and feedback loops."""
+    base_temp = 1.2  # Current temperature anomaly (°C above pre-industrial)
+    return base_temp + rate * (years - 2025) + feedback * np.sin(0.1 * (years - 2025))
+
+# Scenario 1: Optimistic (Immediate Intervention)
+optimistic = climate_projection(years, rate=0.02, feedback=0.1)
+
+# Scenario 2: Moderate (Delayed Response)
+moderate = climate_projection(years, rate=0.04, feedback=0.2)
+
+# Scenario 3: Pessimistic (Runaway Feedback)
+pessimistic = climate_projection(years, rate=0.08, feedback=0.4)
+
+# Plot results
+plt.figure(figsize=(10, 5))
+plt.plot(years, optimistic, label="Optimistic (1.5°C cap)", color="green")
+plt.plot(years, moderate, label="Moderate (2.5°C rise)", color="orange")
+plt.plot(years, pessimistic, label="Pessimistic (>4°C rise)", color="red")
+plt.axhline(1.5, linestyle="--", color="green", alpha=0.6, label="1.5°C Threshold")
+plt.axhline(2.5, linestyle="--", color="orange", alpha=0.6, label="2.5°C Danger Zone")
+plt.axhline(4.0, linestyle="--", color="red", alpha=0.6, label="4.0°C Critical Limit")
+
+# Labels and legend
+plt.xlabel("Year")
+plt.ylabel("Global Temperature Anomaly (°C)")
+plt.title("Simulated Climate Futures (2025-2100)")
+plt.legend()
+plt.grid(True)
+plt.show()
