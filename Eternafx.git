@@ -1,0 +1,63 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from numba import jit  # For performance optimization
+
+# JIT-compiled Mandelbrot calculation for massive speedup
+@jit(nopython=True)
+def mandelbrot(c_real, c_imag, max_iter):
+    iterations = np.zeros((c_real.shape[0], c_imag.shape[0]))
+    for i in range(c_real.shape[0]):
+        for j in range(c_imag.shape[0]):
+            z_real, z_imag = 0.0, 0.0
+            cr, ci = c_real[i], c_imag[j]
+            for n in range(max_iter):
+                z_real2 = z_real * z_real
+                z_imag2 = z_imag * z_imag
+                if z_real2 + z_imag2 > 4.0:
+                    iterations[i, j] = n
+                    break
+                z_imag = 2 * z_real * z_imag + ci
+                z_real = z_real2 - z_imag2 + cr
+            else:
+                iterations[i, j] = max_iter
+    return iterations
+
+# Wave function with dynamic parameters
+def wave_function(x, y, t):
+    return np.sin(0.5*x + t) * np.cos(0.5*y - t) * np.exp(-0.1*t)
+
+# Set up coordinates and parameters
+x = np.linspace(-2, 1, 800)
+y = np.linspace(-1.5, 1.5, 800)
+X, Y = np.meshgrid(x, y)
+max_iter = 80
+
+# Precompute Mandelbrot set once
+print("Calculating Mandelbrot set...")
+mandel = mandelbrot(x, y, max_iter).T
+
+# Create figure and initial plot
+fig, ax = plt.subplots(figsize=(10, 8))
+img = ax.imshow(mandel, cmap='hot', extent=(x.min(), x.max(), y.min(), y.max()))
+fig.colorbar(img, ax=ax, label='Iterations')
+
+# Animation update function
+def animate(t):
+    # Combine Mandelbrot set with dynamic wave pattern
+    wave = wave_function(X, Y, t)
+    combined = np.log(mandel + 1) * (1 + 0.5 * wave)
+    img.set_data(combined)
+    img.set_clim(vmin=combined.min(), vmax=combined.max())
+    ax.set_title(f"Mandelbrot-Wave Interaction (t = {t:.2f})")
+    return img,
+
+# Create animation
+ani = animation.FuncAnimation(
+    fig, animate,
+    frames=np.linspace(0, 4*np.pi, 120),
+    interval=50,
+    blit=True
+)
+
+plt.show()
