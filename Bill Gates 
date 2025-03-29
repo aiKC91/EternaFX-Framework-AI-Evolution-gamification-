@@ -1,24 +1,91 @@
-import carbonfootprint
-from typing import Dict
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from typing import Dict, Union
+import logging
+import carbonfootprint  # Assumes a carbonfootprint module with a calculate(job_id) function
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+class ResourceAllocationRequest(BaseModel):
+    user_priority: int = Field(..., ge=0, description="Higher values indicate higher priority for resource allocation.")
+    # Additional request fields can be added here if needed
+
+class ResourceAllocationResponse(BaseModel):
+    gpus: int
+    quantum_time: str
 
 class ResourceEquityOrchestrator:
     def __init__(self):
-        self.historical_impact = {
+        # Historical impact data that could be used for more nuanced resource decisions.
+        self.historical_impact: Dict[str, Dict[str, Union[int, float]]] = {
             "Microsoft": {"year": 1975, "impact_score": 9.8},
             "Gates Foundation": {"year": 2000, "impact_score": 9.9}
         }
     
-    def allocate_compute(self, request: Dict):
-        """Fair resource distribution"""
-        if request["user_priority"] > 5:
-            return {"gpus": 4, "quantum_time": "2h"}
-        return {"gpus": 1, "quantum_time": "30m"}
+    def allocate_compute(self, request: ResourceAllocationRequest) -> Dict[str, Union[int, str]]:
+        """
+        Fair resource distribution based on user priority.
+        
+        Parameters:
+            request (ResourceAllocationRequest): The resource allocation request.
+        
+        Returns:
+            Dict: Allocation details including number of GPUs and quantum compute time.
+        """
+        logger.info("Allocating compute resources for user with priority: %s", request.user_priority)
+        if request.user_priority > 5:
+            allocation = {"gpus": 4, "quantum_time": "2h"}
+        else:
+            allocation = {"gpus": 1, "quantum_time": "30m"}
+        logger.info("Resource allocation decision: %s", allocation)
+        return allocation
     
-    def audit_carbon(self, job_id: str):
-        """Climate impact assessment"""
-        return carbonfootprint.calculate(job_id)
+    def audit_carbon(self, job_id: str) -> Dict:
+        """
+        Assess the carbon footprint for a given job.
+        
+        Parameters:
+            job_id (str): The identifier for the job.
+        
+        Returns:
+            Dict: The carbon footprint assessment.
+        """
+        try:
+            result = carbonfootprint.calculate(job_id)
+            logger.info("Carbon audit completed for job %s: %s", job_id, result)
+        except Exception as e:
+            logger.error("Carbon audit failed for job %s: %s", job_id, e)
+            raise HTTPException(status_code=500, detail=f"Carbon audit failed: {e}")
+        return result
 
-# API Endpoint
-@app.post("/bill/allocate")
-async def allocate_resources(request: dict):
-    return ResourceEquityOrchestrator().allocate_compute(request)
+# Instantiate orchestrator once for reusability
+orchestrator = ResourceEquityOrchestrator()
+
+@app.post("/bill/allocate", response_model=ResourceAllocationResponse)
+async def allocate_resources(request: ResourceAllocationRequest):
+    """
+    API endpoint to allocate compute resources fairly based on user priority.
+    
+    Returns:
+        ResourceAllocationResponse: The compute resource allocation.
+    """
+    allocation = orchestrator.allocate_compute(request)
+    return allocation
+
+@app.get("/carbon/audit/{job_id}", response_model=Dict)
+async def audit_carbon(job_id: str):
+    """
+    API endpoint to audit the carbon footprint of a given job.
+    
+    Parameters:
+        job_id (str): The identifier for the job to audit.
+    
+    Returns:
+        Dict: The carbon footprint assessment data.
+    """
+    result = orchestrator.audit_carbon(job_id)
+    return result
