@@ -1,29 +1,59 @@
-# File: eternafx/modules/alan_turing.py
-from z3 import Solver, Int, prove
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from z3 import Solver, Int, And, Or
 import hashlib
+
+# API and data models
+app = FastAPI()
+
+class ConjectureRequest(BaseModel):
+    conjecture: str = Field(..., description="Logical statement to be verified using Z3.")
+
+class ConjectureResponse(BaseModel):
+    result: str
+    details: str
 
 class TheoryVerificationCore:
     def __init__(self):
         self.history = self._load_turing_legacy()
-        
+
     def _load_turing_legacy(self):
         return {
             "concepts": ["Turing Machine", "Enigma Decryption", "Morphogenesis"],
             "unproven": ["P vs NP resolution"]
         }
+
+    def verify_proof(self, conjecture: str) -> ConjectureResponse:
+        """Formally verify a conjecture using Z3 theorem prover."""
+        try:
+            s = Solver()
+            x = Int('x')  # Example variable, extendable for more complex proofs
+            # Only allow limited expressions; no `eval` for safety
+            if conjecture == "x > 0":
+                s.add(x > 0)
+            elif conjecture == "x + 1 > 0":
+                s.add(x + 1 > 0)
+            else:
+                raise ValueError("Unsupported conjecture format.")
+            
+            result = s.check()
+            return ConjectureResponse(
+                result=str(result),
+                details="The conjecture was evaluated and the result is: " + str(result)
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error verifying conjecture: {e}")
     
-    def verify_proof(self, conjecture: str):
-        """Formally verify using Z3 theorem prover"""
-        s = Solver()
-        x = Int('x')
-        s.add(eval(conjecture))  # Simplified example
-        return str(s.check())
-    
-    def validate_complexity(self, algorithm: str):
-        """Check polynomial-time compliance"""
+    def validate_complexity(self, algorithm: str) -> str:
+        """Check polynomial-time compliance."""
         return "O(n^k)" if "quantum" in algorithm else "Unknown"
 
-# API Endpoint
-@app.post("/alan/verify")
-async def verify_conjecture(conjecture: str):
-    return TheoryVerificationCore().verify_proof(conjecture)
+# Instantiate core once for reusability
+theory_core = TheoryVerificationCore()
+
+@app.post("/alan/verify", response_model=ConjectureResponse)
+async def verify_conjecture(request: ConjectureRequest):
+    """
+    API endpoint to verify logical conjectures using Z3 theorem prover.
+    """
+    return theory_core.verify_proof(request.conjecture)
