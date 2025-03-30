@@ -1,0 +1,617 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import matplotlib.animation as animation
+from matplotlib.widgets import Slider, Button, RadioButtons
+from scipy.spatial.transform import Rotation as R
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+import colorsys
+
+class EnhancedEternaFX:
+    """
+    Enhanced EternaFX Framework for quantum visualization in gaming projects.
+    Features additional 4D objects, interactive controls, and quantum-inspired effects.
+    """
+
+    def __init__(self, theme="quantum"):
+        """Initializes EternaFX with enhanced visual settings and comprehensive interactive elements."""
+        self.fig = plt.figure(figsize=(12, 8))
+        self.ax = self.fig.add_subplot(111, projection='3d')
+        
+        # Initialize scatter plot
+        self.scatter = self.ax.scatter([], [], [], c=[], s=50, marker='o', alpha=0.8, edgecolors='w', linewidths=0.5)
+        
+        # Optional line collection for connecting points (e.g., for hypercube edges)
+        self.lines = None
+        
+        # Apply theme
+        self.apply_theme(theme)
+        
+        # Initialize parameters
+        self.points_4d = None
+        self.edges = []
+        self.color_data = None
+        self.point_size = 50
+        self.rotation_speed_multiplier = 1.0
+        self.colormap = cm.viridis
+        self.show_edges = False
+        self.current_shape = "hypersphere"
+        self.transformation_type = "none"
+        self.quantum_effect = "none"
+        self.animation_config = {
+            'rotation_axes': 'xyz',
+            'rotation_angles': [45, 30, 15],
+            'rotation_speeds': [0.8, 0.6, 0.4],
+            'scale_factor': 1.2,
+            'camera_elevation': 35,
+            'camera_azimuth': 45,
+            'color_cycle_speed': 15
+        }
+        
+        # Set up slider area
+        self.slider_axes = {}
+        self.sliders = {}
+        self.setup_controls()
+
+    def apply_theme(self, theme):
+        """Apply visual theme to the plot."""
+        if theme == "quantum":
+            plt.style.use('dark_background')
+            self.ax.set_facecolor('black')
+            self.fig.patch.set_facecolor('black')
+            self.ax.grid(False)
+            self.ax.xaxis.pane.fill = False
+            self.ax.yaxis.pane.fill = False
+            self.ax.zaxis.pane.fill = False
+            self.ax.xaxis.pane.set_edgecolor('w')
+            self.ax.yaxis.pane.set_edgecolor('w')
+            self.ax.zaxis.pane.set_edgecolor('w')
+            self.ax.set_title('EternaFX: Quantum Visualization', color='white', fontsize=14)
+            self.ax.set_xlabel('X', color='white')
+            self.ax.set_ylabel('Y', color='white')
+            self.ax.set_zlabel('Z', color='white')
+            self.ax.tick_params(colors='white')
+        else:
+            # Default light theme
+            self.ax.set_title('EternaFX: 4D Visualization', fontsize=14)
+            self.ax.set_xlabel('X')
+            self.ax.set_ylabel('Y')
+            self.ax.set_zlabel('Z')
+
+    def setup_controls(self):
+        """Set up interactive control panel."""
+        # Speed slider
+        self.slider_axes['speed'] = plt.axes([0.25, 0.06, 0.50, 0.02])
+        self.sliders['speed'] = Slider(
+            ax=self.slider_axes['speed'], 
+            label='Rotation Speed', 
+            valmin=0.1, 
+            valmax=3.0, 
+            valinit=1.0,
+            color='deepskyblue'
+        )
+        self.sliders['speed'].on_changed(self.update_speed)
+        
+        # Scale slider
+        self.slider_axes['scale'] = plt.axes([0.25, 0.03, 0.50, 0.02])
+        self.sliders['scale'] = Slider(
+            ax=self.slider_axes['scale'], 
+            label='Scale', 
+            valmin=0.5, 
+            valmax=2.0, 
+            valinit=1.2,
+            color='mediumseagreen'
+        )
+        self.sliders['scale'].on_changed(self.update_scale)
+        
+        # Shape selection
+        self.radio_ax = plt.axes([0.02, 0.78, 0.12, 0.15])
+        self.radio_shape = RadioButtons(
+            self.radio_ax, 
+            ('Hypersphere', 'Hypercube', 'Torus', 'Klein Bottle'),
+            activecolor='deepskyblue'
+        )
+        self.radio_shape.on_clicked(self.update_shape)
+        
+        # Transformation selection
+        self.transform_ax = plt.axes([0.02, 0.58, 0.12, 0.15])
+        self.radio_transform = RadioButtons(
+            self.transform_ax, 
+            ('None', 'Shear', 'Scale', 'Twist'),
+            activecolor='mediumseagreen'
+        )
+        self.radio_transform.on_clicked(self.update_transformation)
+        
+        # Quantum effect selection
+        self.effect_ax = plt.axes([0.02, 0.38, 0.12, 0.15])
+        self.radio_effect = RadioButtons(
+            self.effect_ax, 
+            ('None', 'Entanglement', 'Superposition', 'Tunneling'),
+            activecolor='mediumpurple'
+        )
+        self.radio_effect.on_clicked(self.update_effect)
+        
+        # Toggle edges button
+        self.edge_ax = plt.axes([0.02, 0.32, 0.12, 0.04])
+        self.edge_button = Button(self.edge_ax, 'Toggle Edges', color='lightgray')
+        self.edge_button.on_clicked(self.toggle_edges)
+        
+        # Reset button
+        self.reset_ax = plt.axes([0.02, 0.26, 0.12, 0.04])
+        self.reset_button = Button(self.reset_ax, 'Reset View', color='lightgray')
+        self.reset_button.on_clicked(self.reset_view)
+
+    def update_speed(self, val):
+        """Update rotation speed multiplier."""
+        self.rotation_speed_multiplier = val
+        self.animation_config['rotation_speeds'] = [0.8 * val, 0.6 * val, 0.4 * val]
+
+    def update_scale(self, val):
+        """Update scale factor."""
+        self.animation_config['scale_factor'] = val
+
+    def update_shape(self, label):
+        """Update shape type."""
+        shape_map = {
+            'Hypersphere': 'hypersphere',
+            'Hypercube': 'hypercube',
+            'Torus': 'torus',
+            'Klein Bottle': 'klein'
+        }
+        self.current_shape = shape_map[label]
+        self.regenerate_shape()
+
+    def update_transformation(self, label):
+        """Update transformation type."""
+        transform_map = {
+            'None': 'none',
+            'Shear': 'shear_w',
+            'Scale': 'scale_w', 
+            'Twist': 'twist'
+        }
+        self.transformation_type = transform_map[label]
+
+    def update_effect(self, label):
+        """Update quantum effect type."""
+        effect_map = {
+            'None': 'none',
+            'Entanglement': 'entanglement',
+            'Superposition': 'superposition',
+            'Tunneling': 'tunneling'
+        }
+        self.quantum_effect = effect_map[label]
+
+    def toggle_edges(self, event):
+        """Toggle edge visibility."""
+        self.show_edges = not self.show_edges
+
+    def reset_view(self, event):
+        """Reset camera view."""
+        self.ax.view_init(elev=35, azim=45)
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self.ax.set_zlabel('Z')
+
+    def regenerate_shape(self):
+        """Regenerate shape based on current settings."""
+        if self.current_shape == 'hypersphere':
+            self.points_4d, self.edges = self.generate_4d_hypersphere(num_points=300)
+        elif self.current_shape == 'hypercube':
+            self.points_4d, self.edges = self.generate_4d_hypercube(num_points_per_edge=6)
+        elif self.current_shape == 'torus':
+            self.points_4d, self.edges = self.generate_4d_torus(num_points_u=20, num_points_v=20)
+        elif self.current_shape == 'klein':
+            self.points_4d, self.edges = self.generate_klein_bottle(num_points_u=20, num_points_v=20)
+
+    def generate_4d_hypersphere(self, num_points=100):
+        """Generates points on a 4D hypersphere with improved sampling."""
+        # Use Fibonacci sphere algorithm for better point distribution
+        indices = np.arange(0, num_points, dtype=float) + 0.5
+        phi = np.arccos(1 - 2 * indices / num_points)
+        theta = np.pi * (1 + 5**0.5) * indices
+        
+        # First set of angles for 3D sphere
+        x = np.cos(theta) * np.sin(phi)
+        y = np.sin(theta) * np.sin(phi)
+        z = np.cos(phi)
+        
+        # Additional angle for 4D
+        extra_angle = np.linspace(0, 2 * np.pi, num_points)
+        w = np.sin(extra_angle)
+        
+        # Normalize to ensure all points are on the hypersphere
+        points = np.column_stack((x, y, z, w))
+        norms = np.linalg.norm(points, axis=1, keepdims=True)
+        points = points / norms
+        
+        # No explicit edges for hypersphere, but we'll return empty list for consistency
+        edges = []
+        
+        # Save color data based on 4D position
+        self.color_data = np.arctan2(points[:, 0], points[:, 1]) + np.arctan2(points[:, 2], points[:, 3])
+        
+        return points, edges
+
+    def generate_4d_hypercube(self, num_points_per_edge=4):
+        """Generates points and edges for a 4D hypercube."""
+        # Generate vertices (corners of the hypercube)
+        vertices = np.array(list(np.ndindex((2,) * 4))) * 2 - 1
+        
+        # Generate edges - connect vertices that differ in exactly one coordinate
+        edges = []
+        for i in range(len(vertices)):
+            for j in range(i + 1, len(vertices)):
+                if np.sum(np.abs(vertices[i] - vertices[j])) == 2:  # Differ in one coordinate
+                    edges.append((i, j))
+        
+        # Generate additional points along edges for smoother visualization
+        if num_points_per_edge > 2:
+            points_4d = []
+            for v in vertices:
+                points_4d.append(v)  # Add the vertex
+            
+            for i, j in edges:
+                for t in np.linspace(0, 1, num_points_per_edge)[1:-1]:
+                    # Linear interpolation between vertices
+                    point = vertices[i] * (1 - t) + vertices[j] * t
+                    points_4d.append(point)
+            
+            points_4d = np.array(points_4d)
+        else:
+            points_4d = vertices
+        
+        # Create color data
+        self.color_data = np.arctan2(points_4d[:, 0], points_4d[:, 1])
+        
+        return points_4d, edges
+
+    def generate_4d_torus(self, num_points_u=20, num_points_v=20, R=1.0, r=0.5):
+        """Generates points and connectivity for a 4D torus embedding."""
+        u = np.linspace(0, 2 * np.pi, num_points_u)
+        v = np.linspace(0, 2 * np.pi, num_points_v)
+        u_grid, v_grid = np.meshgrid(u, v)
+        u_flat, v_flat = u_grid.flatten(), v_grid.flatten()
+        
+        # 4D torus parametrization
+        x = (R + r * np.cos(v_flat)) * np.cos(u_flat)
+        y = (R + r * np.cos(v_flat)) * np.sin(u_flat)
+        z = r * np.sin(v_flat)
+        w = r * np.sin(u_flat) * np.sin(v_flat)  # Additional 4th dimension
+        
+        points_4d = np.column_stack((x, y, z, w))
+        
+        # Create grid connectivity for visualization
+        edges = []
+        for i in range(num_points_u):
+            for j in range(num_points_v):
+                idx = j * num_points_u + i
+                # Connect to next point in u direction
+                if i < num_points_u - 1:
+                    edges.append((idx, idx + 1))
+                else:  # Wrap around
+                    edges.append((idx, j * num_points_u))
+                
+                # Connect to next point in v direction
+                if j < num_points_v - 1:
+                    edges.append((idx, idx + num_points_u))
+                else:  # Wrap around
+                    edges.append((idx, i))
+        
+        # Create color data
+        self.color_data = u_flat + v_flat
+        
+        return points_4d, edges
+
+    def generate_klein_bottle(self, num_points_u=20, num_points_v=20):
+        """Generates points for a 4D embedding of a Klein bottle."""
+        u = np.linspace(0, 2 * np.pi, num_points_u)
+        v = np.linspace(0, 2 * np.pi, num_points_v)
+        u_grid, v_grid = np.meshgrid(u, v)
+        u_flat, v_flat = u_grid.flatten(), v_grid.flatten()
+        
+        # 4D Klein bottle parametrization
+        cosu = np.cos(u_flat)
+        sinu = np.sin(u_flat)
+        cosv = np.cos(v_flat)
+        sinv = np.sin(v_flat)
+        
+        x = cosu * (1 + sinv)
+        y = sinu * (1 + cosv)
+        z = cosu * sinv
+        w = sinu * sinv  # Additional dimension for 4D embedding
+        
+        points_4d = np.column_stack((x, y, z, w))
+        
+        # Create grid connectivity
+        edges = []
+        for i in range(num_points_u):
+            for j in range(num_points_v):
+                idx = j * num_points_u + i
+                # Connect to next point in u direction
+                if i < num_points_u - 1:
+                    edges.append((idx, idx + 1))
+                else:  # Wrap around with twist
+                    edges.append((idx, (num_points_v - j - 1) * num_points_u))
+                
+                # Connect to next point in v direction
+                if j < num_points_v - 1:
+                    edges.append((idx, idx + num_points_u))
+                else:  # Wrap around
+                    edges.append((idx, i))
+        
+        # Create color data
+        self.color_data = np.arctan2(points_4d[:, 0], points_4d[:, 1])
+        
+        return points_4d, edges
+
+    def transform_4d_points(self, points_4d, frame_num):
+        """Apply 4D transformations based on the selected type."""
+        transformed_points = np.copy(points_4d)
+        
+        if self.transformation_type == 'none':
+            return transformed_points
+        
+        elif self.transformation_type == 'shear_w':
+            shear_factor = np.sin(frame_num / 20.0) * 1.5
+            transformed_points[:, 3] += shear_factor * transformed_points[:, 0]
+            
+        elif self.transformation_type == 'scale_w':
+            scale_factor_w = 1 + np.sin(frame_num / 30.0) * 0.5
+            transformed_points[:, 3] *= scale_factor_w
+            
+        elif self.transformation_type == 'twist':
+            angle = np.sin(frame_num / 40.0) * np.pi
+            for i in range(len(transformed_points)):
+                r = np.sqrt(transformed_points[i, 0]**2 + transformed_points[i, 1]**2)
+                if r > 0.001:  # Avoid division by zero
+                    theta = np.arctan2(transformed_points[i, 1], transformed_points[i, 0])
+                    theta_new = theta + angle * transformed_points[i, 2]
+                    transformed_points[i, 0] = r * np.cos(theta_new)
+                    transformed_points[i, 1] = r * np.sin(theta_new)
+        
+        return transformed_points
+
+    def apply_quantum_effects(self, points_3d, frame_num):
+        """Apply quantum-inspired visual effects to the 3D points."""
+        if self.quantum_effect == 'none':
+            return points_3d, self.color_data
+        
+        modified_points = np.copy(points_3d)
+        modified_colors = np.copy(self.color_data)
+        
+        if self.quantum_effect == 'entanglement':
+            # Simulate quantum entanglement by creating pairs of points that move together
+            pair_indices = np.arange(len(points_3d))
+            np.random.shuffle(pair_indices)
+            pair_indices = pair_indices.reshape(-1, 2)
+            
+            for i, j in pair_indices:
+                if i < len(modified_points) and j < len(modified_points):
+                    # Create subtle connections between pairs
+                    center = (modified_points[i] + modified_points[j]) / 2
+                    displacement = (modified_points[i] - modified_points[j]) * 0.1 * np.sin(frame_num / 15.0)
+                    modified_points[i] = center + displacement
+                    modified_points[j] = center - displacement
+                    
+                    # Entangle colors too
+                    avg_color = (modified_colors[i] + modified_colors[j]) / 2
+                    modified_colors[i] = avg_color
+                    modified_colors[j] = avg_color
+        
+        elif self.quantum_effect == 'superposition':
+            # Simulate quantum superposition with ghost/echo points
+            phase = np.sin(frame_num / 20.0) * 0.3
+            # We don't actually duplicate points but make them appear to be in multiple states
+            noise = np.random.normal(0, 0.05, modified_points.shape) * phase
+            modified_points += noise
+            
+        elif self.quantum_effect == 'tunneling':
+            # Simulate quantum tunneling with points occasionally jumping through barriers
+            t = frame_num / 10.0
+            mask = np.random.rand(len(points_3d)) < 0.1  # 10% of points tunnel
+            tunnel_distance = 0.5 * np.sin(t)
+            # Randomly select tunneling direction
+            tunnel_dir = np.random.rand(sum(mask), 3) * 2 - 1
+            tunnel_dir = tunnel_dir / np.linalg.norm(tunnel_dir, axis=1)[:, np.newaxis]
+            modified_points[mask] += tunnel_dir * tunnel_distance
+        
+        return modified_points, modified_colors
+
+    def project_4d_to_3d(self, points_4d, frame_num):
+        """Project 4D points to 3D with rotation and perspective."""
+        config = self.animation_config
+        rotation_axes = config.get('rotation_axes', 'xyz')
+        rotation_angles = config.get('rotation_angles', [45, 30, 15])
+        rotation_speeds = config.get('rotation_speeds', [0.8, 0.6, 0.4])
+        scale_factor = config.get('scale_factor', 1.0)
+        
+        # Compute rotation angles with speed multiplier
+        angles = []
+        for i, axis in enumerate(rotation_axes):
+            if i < len(rotation_angles) and i < len(rotation_speeds):
+                angles.append(rotation_angles[i] + frame_num * rotation_speeds[i])
+            else:
+                angles.append(0)
+                
+        # Apply 3D rotation
+        rot = R.from_euler(rotation_axes, angles[:len(rotation_axes)], degrees=True)
+        
+        # Project 4D to 3D using perspective projection
+        w_factor = 2.0 / (2.0 + points_4d[:, 3])  # Perspective divide
+        points_3d = points_4d[:, :3] * w_factor[:, np.newaxis]
+        
+        # Apply 3D rotation after projection
+        points_3d_rotated = rot.apply(points_3d)
+        
+        # Apply scale
+        return points_3d_rotated * scale_factor
+
+    def draw_edges(self, points_3d):
+        """Draw edges between points if show_edges is enabled."""
+        if not self.show_edges or not self.edges:
+            return None
+            
+        segments = []
+        for i, j in self.edges:
+            if i < len(points_3d) and j < len(points_3d):
+                segments.append([points_3d[i], points_3d[j]])
+                
+        if segments:
+            lc = Line3DCollection(segments, colors='cyan', alpha=0.3, linewidths=0.5)
+            self.ax.add_collection3d(lc)
+            return lc
+        return None
+
+    def adjust_axes_limits(self, points_3d, padding_factor=1.2):
+        """Adjust 3D axes limits to fit the data with padding."""
+        if len(points_3d) == 0:
+            return
+            
+        x_range = np.ptp(points_3d[:, 0])
+        y_range = np.ptp(points_3d[:, 1])
+        z_range = np.ptp(points_3d[:, 2])
+        
+        max_range = max(x_range, y_range, z_range) / 2.0
+        
+        mid_x = (np.max(points_3d[:, 0]) + np.min(points_3d[:, 0])) * 0.5
+        mid_y = (np.max(points_3d[:, 1]) + np.min(points_3d[:, 1])) * 0.5
+        mid_z = (np.max(points_3d[:, 2]) + np.min(points_3d[:, 2])) * 0.5
+        
+        self.ax.set_xlim(mid_x - max_range * padding_factor, mid_x + max_range * padding_factor)
+        self.ax.set_ylim(mid_y - max_range * padding_factor, mid_y + max_range * padding_factor)
+        self.ax.set_zlim(mid_z - max_range * padding_factor, mid_z + max_range * padding_factor)
+
+    def animate(self, frame_num):
+        """Animation function with comprehensive effects."""
+        # Clear previous frame's collections
+        if hasattr(self, 'line_collection') and self.line_collection:
+            self.line_collection.remove()
+            self.line_collection = None
+            
+        self.ax.clear()
+        
+        if self.points_4d is None:
+            self.regenerate_shape()
+            
+        # Apply 4D transformations
+        transformed_points_4d = self.transform_4d_points(self.points_4d, frame_num)
+        
+        # Project to 3D
+        points_3d = self.project_4d_to_3d(transformed_points_4d, frame_num)
+        
+        # Apply quantum effects
+        points_3d, color_values = self.apply_quantum_effects(points_3d, frame_num)
+        
+        # Update scatter plot
+        self.scatter = self.ax.scatter(
+            points_3d[:, 0], points_3d[:, 1], points_3d[:, 2],
+            c=color_values, 
+            s=self.point_size,
+            cmap=self.colormap,
+            alpha=0.8,
+            edgecolors='w',
+            linewidths=0.5
+        )
+        
+        # Draw edges if needed
+        self.line_collection = self.draw_edges(points_3d)
+        
+        # Update camera
+        config = self.animation_config
+        camera_elevation = config.get('camera_elevation', 30)
+        camera_azimuth = config.get('camera_azimuth', 30) + frame_num * 0.5
+        self.ax.view_init(elev=camera_elevation, azim=camera_azimuth)
+        
+        # Update labels and title
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self.ax.set_zlabel('Z')
+        
+        shape_names = {
+            'hypersphere': 'Hypersphere', 
+            'hypercube': 'Hypercube', 
+            'torus': '4D Torus', 
+            'klein': 'Klein Bottle'
+        }
+        transform_names = {
+            'none': 'No Transform', 
+            'shear_w': 'W-Shear', 
+            'scale_w': 'W-Scale', 
+            'twist': '4D Twist'
+        }
+        effect_names = {
+            'none': 'No Effect', 
+            'entanglement': 'Entanglement', 
+            'superposition': 'Superposition', 
+            'tunneling': 'Tunneling'
+        }
+        
+        title = f"EternaFX: {shape_names.get(self.current_shape, 'Shape')} with "
+        title += f"{transform_names.get(self.transformation_type, 'Transform')} and "
+        title += f"{effect_names.get(self.quantum_effect, 'Effect')}"
+        self.ax.set_title(title, color='white' if plt.rcParams['figure.facecolor'] == 'black' else 'black')
+        
+        # Adjust limits
+        self.adjust_axes_limits(points_3d)
+        
+        return self.scatter,
+
+    def run_visualization(self, frames=200, interval=50, save_animation=False, filename='eternafx_quantum.mp4'):
+        """Run the enhanced visualization with all interactive elements."""
+        # Initialize shape if not already done
+        if self.points_4d is None:
+            self.regenerate_shape()
+            
+        # Create animation
+        ani = animation.FuncAnimation(
+            self.fig, 
+            self.animate, 
+            frames=frames, 
+            interval=interval, 
+            blit=False
+        )
+        
+        # Save animation if requested
+        if save_animation:
+            try:
+                ani.save(filename, writer='ffmpeg', dpi=120)
+                print(f"Animation saved as {filename} (MP4 format).")
+            except Exception as e:
+                print(f"Error saving MP4 animation: {e}")
+                try:
+                    ani.save(filename.replace('.mp4', '.gif'), writer='pillow')
+                    print(f"Animation saved as {filename.replace('.mp4', '.gif')} (GIF format).")
+                except Exception as e_gif:
+                    print(f"Error saving GIF animation: {e_gif}")
+        
+        plt.tight_layout(rect=[0, 0.1, 1, 1])  # Adjust for control panel
+        plt.show()
+
+
+if __name__ == '__main__':
+    print("\n" + "="*80)
+    print("EternaFX Quantum Visualization Framework".center(80))
+    print("="*80 + "\n")
+    
+    print("This framework enables interactive visualization of 4D objects with quantum-inspired effects")
+    print("designed specifically for quantum gaming and educational applications.\n")
+    
+    print("Features:")
+    print("  - Multiple 4D shapes: Hypersphere, Hypercube, Torus, Klein Bottle")
+    print("  - 4D transformations: Shear, Scale, Twist")
+    print("  - Quantum effects: Entanglement, Superposition, Tunneling")
+    print("  - Interactive controls for real-time parameter adjustment")
+    print("  - Scientific visualization with aesthetic enhancements\n")
+    
+    print("Usage Guide:")
+    print("  1. Use radio buttons to select shapes, transformations, and quantum effects")
+    print("  2. Adjust rotation speed and scale with sliders")
+    print("  3. Toggle edge visibility to see the geometric structure")
+    print("  4. Reset view if needed with the reset button\n")
+    
+    print("Starting visualization...\n")
+    print("="*80 + "\n")
+    
+    # Create and run the enhanced visualization
+    efx = EnhancedEternaFX(theme="quantum")
+    efx.run_visualization(frames=300, interval=40, save_animation=False)
