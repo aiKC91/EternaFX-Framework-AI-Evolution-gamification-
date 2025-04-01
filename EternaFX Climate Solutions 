@@ -1,0 +1,502 @@
+import numpy as np
+import mpmath as mp
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import logging
+from typing import List, Dict, Callable, Optional
+from statsmodels.tsa.arima.model import ARIMA
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("climate_eternafx_enhanced.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("ClimateEternaFXEnhanced")
+
+# ==============================
+# AI Agent for Climate Modeling
+# ==============================
+class AIAgent:
+    """
+    Represents an AI agent for a climate subsystem/scenario.
+    Produces a forecast (with confidence interval) for a climate metric.
+    """
+    def __init__(self, 
+                 name: str, 
+                 model_fn: Callable,
+                 cost_fn: Callable,
+                 sustainability_eval: Callable):
+        self.name = name
+        self.model_fn = model_fn
+        self.cost_fn = cost_fn
+        self.sustainability_eval = sustainability_eval
+        self.regret = 0.0
+        self.weight = 0.0
+        self.output = None  # Expected dict with metrics and uncertainty estimates
+        self.sustainability_score = 0.0
+        
+    def compute(self, input_data: Dict, compute_budget: float) -> Dict:
+        self.output = self.model_fn(input_data)
+        # Evaluate sustainability and uncertainty
+        self.sustainability_score, self.uncertainty = self.sustainability_eval(self.output)
+        logger.debug(f"{self.name}: Sustainability={self.sustainability_score:.4f}, Uncertainty={self.uncertainty:.4f}")
+        return self.output
+    
+    def get_cost(self) -> float:
+        return self.cost_fn(self.output) if self.output is not None else 0.0
+    
+    def update_regret(self, max_sustainability: float):
+        self.regret = max(0, max_sustainability - self.sustainability_score)
+
+# ================================================
+# Enhanced Climate-Adaptive EternaFX Framework
+# ================================================
+class ClimateEternaFX:
+    """
+    Enhanced climate-adapted EternaFX Unified Framework.
+    Integrates adaptive AI agents, uncertainty quantification, geospatial data,
+    time series forecasting via ARIMA, and adaptive learning rates.
+    """
+    
+    def __init__(self, 
+                 agents: List[AIAgent],
+                 compute_budget: float = 1.0,
+                 beta: float = 5.0,
+                 combination_weights: Optional[List[float]] = None,
+                 eta: float = 0.1,
+                 noise_threshold: float = 0.2,
+                 quantum_enabled: bool = False):
+        self.agents = agents
+        self.compute_budget = compute_budget
+        self.beta = beta  # initial softmax temperature
+        self.eta = eta
+        self.noise_threshold = noise_threshold
+        self.quantum_enabled = quantum_enabled
+        
+        self.time = 0
+        self.system_state = {}
+        self.efficiency = 1.0
+        self.harmony = 0.0      # Climate sustainability index
+        self.chaos = 0.0        # Environmental volatility index
+        self.zeta = 0.0
+        self.scenario_state = {}  # Scenario pool for interventions
+        self.user_input = {}
+        self.traceability = 0.0
+        self.n_scenarios = 0
+        self.selected_scenario = {}
+        
+        # History for forecasting and visualization
+        self.history = {
+            "efficiency": [],
+            "harmony": [],
+            "chaos": [],
+            "zeta": [],
+            "forecast_harmony": [],
+            "agent_weights": {agent.name: [] for agent in self.agents},
+            "score_variance": []
+        }
+        
+        # Precompute zeta values for efficiency when resources are low.
+        self.zeta_precomputed = self._precompute_zeta_values()
+        
+        # Combination weights: Order is AI Term, (H - C), Zeta, Scenario, Policy, Traceability, (Uncertainty + Forecast)
+        if combination_weights:
+            assert np.isclose(sum(combination_weights), 1.0), "Weights must sum to 1"
+            self.combination_weights = combination_weights
+        else:
+            self.combination_weights = [0.20, 0.20, 0.15, 0.15, 0.10, 0.10, 0.10]
+        
+        self._normalize_agent_weights()
+    
+    def _precompute_zeta_values(self, n_values: int = 1000) -> np.ndarray:
+        mp.mp.dps = 15
+        values = np.zeros(n_values)
+        for i in range(n_values):
+            t = (i+1) / 10.0
+            values[i] = float(abs(mp.zeta(0.5 + t*1j)))
+        return values
+    
+    def _get_zeta_value(self, t: float) -> float:
+        if self.efficiency == 1.0 and self.quantum_enabled:
+            mp.mp.dps = 15
+            return float(abs(mp.zeta(0.5 + t*1j)))
+        else:
+            index = min(int(t * 10) - 1, len(self.zeta_precomputed) - 1)
+            return self.zeta_precomputed[max(0, index)]
+    
+    def _normalize_agent_weights(self):
+        # Adaptive β update based on variance of sustainability scores
+        sustainability_scores = [agent.sustainability_score for agent in self.agents]
+        if sustainability_scores:
+            variance = np.var(sustainability_scores)
+            self.history["score_variance"].append(variance)
+            max_var = max(self.history["score_variance"]) if self.history["score_variance"] else variance
+            self.beta *= (1 + variance / (max_var + 1e-8))
+        max_sustainability = max(sustainability_scores) if sustainability_scores else 0
+        for agent in self.agents:
+            agent.update_regret(max_sustainability)
+        regrets = np.array([agent.regret for agent in self.agents])
+        exp_values = np.exp(-self.beta * regrets)
+        sum_exp = np.sum(exp_values)
+        if sum_exp > 0:
+            normalized_weights = exp_values / sum_exp
+            for i, agent in enumerate(self.agents):
+                agent.weight = normalized_weights[i]
+        else:
+            equal_weight = 1.0 / len(self.agents) if self.agents else 0
+            for agent in self.agents:
+                agent.weight = equal_weight
+    
+    def _calculate_efficiency(self) -> float:
+        total_cost = sum(agent.get_cost() for agent in self.agents)
+        harmony_cost = 0.1  # Sample cost for harmony computation
+        chaos_cost = 0.1    # Sample cost for chaos computation
+        total_cost += harmony_cost + chaos_cost
+        return 1.0 if total_cost == 0 else min(1.0, self.compute_budget / total_cost)
+    
+    def _calculate_harmony(self, state: Dict) -> float:
+        # Incorporate geospatial modifiers if available (region_modifier)
+        factors = [
+            state.get("renewable_share", 0.5),
+            state.get("emission_reduction", 0.5),
+            state.get("conservation_index", 0.5)
+        ]
+        region_modifier = state.get("region_modifier", 1.0)
+        weights = [0.4, 0.35, 0.25]
+        weighted_harmony = sum(w * f for w, f in zip(weights, factors)) * region_modifier
+        return self.efficiency * weighted_harmony
+    
+    def _calculate_chaos(self, state: Dict) -> float:
+        extreme = state.get("extreme_events", 0.3)
+        uncertainty = state.get("forecast_uncertainty", 0.3)
+        return self.efficiency * (extreme + uncertainty)
+    
+    def _optimal_stopping_threshold(self) -> int:
+        n = self.n_scenarios if self.n_scenarios > 0 else 1
+        base_threshold = int(n / np.e)
+        adjustment = self.eta * (self.harmony - self.chaos)
+        threshold = max(1, min(n-1, base_threshold + int(adjustment * n)))
+        return threshold
+    
+    def _explore_scenario(self, ai_output: Dict, zeta: float) -> Dict:
+        scenario = {
+            "id": self.n_scenarios + 1,
+            "generated_by": "AI",
+            "harmony_score": self.harmony,
+            "chaos_score": self.chaos,
+            "zeta_influence": zeta,
+            "content": ai_output
+        }
+        self.n_scenarios += 1
+        return scenario
+    
+    def _select_best_scenario(self, scenarios: List[Dict]) -> Dict:
+        if not scenarios:
+            return {}
+        sorted_scenarios = sorted(
+            scenarios, 
+            key=lambda s: s.get("harmony_score", 0) - s.get("chaos_score", 0),
+            reverse=True
+        )
+        return sorted_scenarios[0]
+    
+    def _process_user_input(self, user_input: Dict) -> Dict:
+        processed = {}
+        for key, value in user_input.items():
+            if isinstance(value, (int, float)):
+                processed[key] = max(0, value - self.noise_threshold)
+            else:
+                processed[key] = value
+        threshold = self._optimal_stopping_threshold()
+        return processed if self.time >= threshold else {}
+    
+    def _calculate_traceability(self, delta=0.001) -> float:
+        """
+        Compute traceability numerically using finite differences.
+        Assumes existence of a method _compute_system_state_contribution() that computes
+        the contribution from the current agent weights.
+        """
+        T_values = []
+        S_base = self._compute_system_state_contribution()
+        current_weights = np.array([agent.weight for agent in self.agents])
+        for i, _ in enumerate(self.agents):
+            perturbed_weights = current_weights.copy()
+            perturbed_weights[i] += delta
+            adjustment = delta / (len(self.agents) - 1)
+            for j in range(len(perturbed_weights)):
+                if j != i:
+                    perturbed_weights[j] -= adjustment
+            perturbed_weights /= np.sum(perturbed_weights)  # Renormalize
+            S_perturbed = self._compute_system_state_contribution(perturbed_weights)
+            T_values.append(abs((S_perturbed - S_base) / delta))
+        return np.mean(T_values)
+    
+    def _compute_system_state_contribution(self, weights: Optional[np.ndarray]=None) -> float:
+        """
+        Dummy function to compute system state contribution based on agent weights.
+        In practice, this could be any differentiable function of the state.
+        """
+        if weights is None:
+            weights = np.array([agent.weight for agent in self.agents])
+        # For illustration, we sum the weights multiplied by sustainability scores.
+        contributions = np.array([agent.sustainability_score for agent in self.agents])
+        return float(np.dot(weights, contributions))
+    
+    def forecast_next_state(self, steps=1) -> float:
+        """
+        Forecast next harmony index using ARIMA on historical harmony values.
+        """
+        if len(self.history["harmony"]) < 5:
+            return np.mean(self.history["harmony"]) if self.history["harmony"] else self.harmony
+        model = ARIMA(self.history["harmony"], order=(1,1,1))
+        model_fit = model.fit()
+        return model_fit.forecast(steps=steps)[0]
+    
+    def _apply_combination_function(self, 
+                                    ai_term: Dict, 
+                                    harmony_chaos: float,
+                                    zeta: float,
+                                    scenario: Dict,
+                                    user_input: Dict,
+                                    uncertainty: float,
+                                    forecast: float) -> Dict:
+        w1, w2, w3, w4, w5, w6, w7 = self.combination_weights
+        combined_state = {}
+        # AI contribution (weighted sum of agent outputs)
+        for key, value in ai_term.items():
+            combined_state[key] = w1 * value
+        # Harmony-Chaos balance
+        combined_state["climate_balance"] = w2 * harmony_chaos
+        # Zeta dynamics
+        combined_state["zeta_influence"] = w3 * zeta
+        # Scenario state
+        if scenario:
+            for key, value in scenario.items():
+                if isinstance(value, (int, float)):
+                    combined_state[key] = combined_state.get(key, 0) + w4 * value
+        # Policy input
+        for key, value in user_input.items():
+            if isinstance(value, (int, float)):
+                combined_state[key] = combined_state.get(key, 0) + w5 * value
+            else:
+                combined_state[key] = value
+        # Uncertainty contribution
+        combined_state["uncertainty"] = w6 * uncertainty
+        # Forecast contribution
+        combined_state["forecast"] = w7 * forecast
+        # Add metadata
+        combined_state["time_step"] = self.time
+        combined_state["efficiency"] = self.efficiency
+        combined_state["traceability"] = self.traceability
+        return combined_state
+    
+    def _quantum_resonance(self) -> float:
+        if not self.quantum_enabled:
+            return 0.0
+        primes = [2, 3, 5, 7, 11, 13]
+        h_bar = 1.0545718e-34
+        resonance = self.efficiency * sum(
+            h_bar * (1 / np.log(p)) * (0.5 + np.random.random())
+            for p in primes
+        )
+        return float(resonance)
+    
+    def update_system_state(self, inputs: Dict, user_input: Optional[Dict] = None) -> Dict:
+        self.time += 1
+        logger.info(f"Update at time step {self.time}")
+        
+        # 1. Compute outputs for each AI agent (climate metrics)
+        for agent in self.agents:
+            agent.compute(inputs, self.compute_budget)
+        
+        # 2. Calculate efficiency
+        self.efficiency = self._calculate_efficiency()
+        logger.debug(f"Efficiency: {self.efficiency:.4f}")
+        
+        # 3. Update agent weights with adaptive β
+        self._normalize_agent_weights()
+        
+        # 4. Compute climate harmony and chaos indices
+        self.harmony = self._calculate_harmony(inputs)
+        self.chaos = self._calculate_chaos(inputs)
+        climate_balance = self.harmony - self.chaos
+        logger.debug(f"Harmony: {self.harmony:.4f}, Chaos: {self.chaos:.4f}")
+        
+        # 5. Compute zeta dynamics
+        self.zeta = self._get_zeta_value(self.time)
+        
+        # 6. Update scenarios (exploration vs. exploitation)
+        stopping_threshold = self._optimal_stopping_threshold()
+        combined_ai_output = {}
+        for agent in self.agents:
+            for key, value in agent.output.items():
+                if isinstance(value, (int, float)):
+                    combined_ai_output[key] = combined_ai_output.get(key, 0) + agent.weight * value
+                else:
+                    combined_ai_output[key] = value
+        if self.time < stopping_threshold:
+            new_scenario = self._explore_scenario(combined_ai_output, self.zeta)
+            if not self.scenario_state:
+                self.scenario_state = {}
+            self.scenario_state[new_scenario["id"]] = new_scenario
+        else:
+            scenarios = list(self.scenario_state.values()) if self.scenario_state else []
+            self.selected_scenario = self._select_best_scenario(scenarios)
+        
+        # 7. Process external user/policy input if available
+        processed_input = self._process_user_input(user_input if user_input else {})
+        
+        # 8. Calculate traceability (via numerical differentiation)
+        self.traceability = self._calculate_traceability()
+        
+        # 9. Optionally compute quantum resonance
+        quantum_term = self._quantum_resonance()
+        if quantum_term > 0:
+            logger.debug(f"Quantum resonance: {quantum_term}")
+        
+        # 10. Forecast future harmony (ARIMA)
+        forecast = self.forecast_next_state()
+        
+        # 11. Aggregate uncertainty from agents (average uncertainty)
+        uncertainty = np.mean([agent.uncertainty for agent in self.agents]) if self.agents else 0
+        
+        # 12. Combine all contributions to update system state
+        active_scenario = self.selected_scenario if self.selected_scenario else {}
+        self.system_state = self._apply_combination_function(
+            combined_ai_output,
+            climate_balance,
+            self.zeta,
+            active_scenario,
+            processed_input,
+            uncertainty,
+            forecast
+        )
+        
+        self._update_history()
+        return self.system_state
+    
+    def _update_history(self):
+        self.history["efficiency"].append(self.efficiency)
+        self.history["harmony"].append(self.harmony)
+        self.history["chaos"].append(self.chaos)
+        self.history["zeta"].append(self.zeta)
+        self.history["forecast_harmony"].append(self.forecast_next_state())
+        for agent in self.agents:
+            self.history["agent_weights"][agent.name].append(agent.weight)
+    
+    def visualize(self):
+        fig, axs = plt.subplots(4, 1, figsize=(12, 18))
+        time_steps = range(1, self.time + 1)
+        
+        # Plot efficiency, harmony, chaos
+        axs[0].plot(time_steps, self.history["efficiency"], label="Efficiency", marker='o')
+        axs[0].plot(time_steps, self.history["harmony"], label="Harmony", marker='s')
+        axs[0].plot(time_steps, self.history["chaos"], label="Chaos", marker='^')
+        axs[0].set_title("System Dynamics")
+        axs[0].set_xlabel("Time Step")
+        axs[0].set_ylabel("Index Value")
+        axs[0].legend()
+        axs[0].grid(True)
+        
+        # Plot agent weight evolution
+        for agent_name, weights in self.history["agent_weights"].items():
+            axs[1].plot(time_steps, weights, label=agent_name, marker='.')
+        axs[1].set_title("AI Agent Weight Evolution")
+        axs[1].set_xlabel("Time Step")
+        axs[1].set_ylabel("Weight")
+        axs[1].legend()
+        axs[1].grid(True)
+        
+        # Plot zeta dynamics
+        axs[2].plot(time_steps, self.history["zeta"], label="Zeta Dynamics", color='purple', marker='*')
+        axs[2].set_title("Zeta Dynamics (Long-Term Trends)")
+        axs[2].set_xlabel("Time Step")
+        axs[2].set_ylabel("ζ(1/2+it)")
+        axs[2].legend()
+        axs[2].grid(True)
+        
+        # Plot forecasted harmony
+        axs[3].plot(time_steps, self.history["forecast_harmony"], label="Forecasted Harmony", color='green', marker='d')
+        axs[3].set_title("Forecasted Harmony")
+        axs[3].set_xlabel("Time Step")
+        axs[3].set_ylabel("Forecasted Value")
+        axs[3].legend()
+        axs[3].grid(True)
+        
+        plt.tight_layout()
+        plt.savefig("climate_eternafx_enhanced_dynamics.png")
+        plt.show()
+        return fig
+
+# ==================================
+# Sample Implementations for Testing
+# ==================================
+def sample_model_fn_climate(inputs: Dict) -> Dict:
+    region_factor = inputs.get("region_factor", 1.0)
+    return {
+        "renewable_share": (0.4 + 0.3 * np.random.random()) * region_factor,
+        "emission_reduction": 0.5 + 0.4 * np.random.random(),
+        "conservation_index": 0.6 + 0.3 * np.random.random()
+    }
+
+def sample_cost_fn_climate(output: Dict) -> float:
+    return 0.1 + 0.2 * np.random.random()
+
+def sample_sustainability_eval(output: Dict) -> (float, float):
+    factors = [
+        output.get("renewable_share", 0.5),
+        output.get("emission_reduction", 0.5),
+        output.get("conservation_index", 0.5)
+    ]
+    weights = [0.4, 0.35, 0.25]
+    score = sum(w * f for w, f in zip(weights, factors))
+    uncertainty = np.std(factors)  # Dummy uncertainty calculation
+    return score, uncertainty
+
+def demo_climate_eternafx_enhanced():
+    agents = [
+        AIAgent(f"Agent_{i}", sample_model_fn_climate, sample_cost_fn_climate, sample_sustainability_eval)
+        for i in range(3)
+    ]
+    
+    climate_fx = ClimateEternaFX(
+        agents=agents,
+        compute_budget=1.0,
+        beta=3.0,
+        combination_weights=[0.25, 0.20, 0.15, 0.15, 0.10, 0.10, 0.05],
+        quantum_enabled=True
+    )
+    
+    results = []
+    for t in tqdm(range(20)):
+        input_data = {
+            "renewable_share": 0.5 + 0.5 * np.random.random(),
+            "emission_reduction": 0.6 + 0.4 * np.random.random(),
+            "conservation_index": 0.7 + 0.3 * np.random.random(),
+            "extreme_events": 0.2 + 0.3 * np.random.random(),
+            "forecast_uncertainty": 0.2 + 0.2 * np.random.random(),
+            "region_modifier": 1.0 + 0.1 * np.random.random()
+        }
+        
+        user_input = {}
+        if t >= 10:
+            user_input = {
+                "policy_preference": 0.8 + 0.2 * np.random.random(),
+                "expert_feedback": 0.7 + 0.3 * np.random.random()
+            }
+        
+        state = climate_fx.update_system_state(input_data, user_input)
+        results.append(state)
+    
+    fig = climate_fx.visualize()
+    return climate_fx, results
+
+if __name__ == "__main__":
+    climate_fx, results = demo_climate_eternafx_enhanced()
+    print("\nFinal ClimateEternaFX Enhanced State:")
+    for key, value in results[-1].items():
+        print(f"{key}: {value}")
