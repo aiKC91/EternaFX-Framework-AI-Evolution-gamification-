@@ -1,0 +1,729 @@
+import numpy as np
+import pandas as pd
+import scipy.optimize as optimize
+import matplotlib.pyplot as plt
+import seaborn as sns
+from typing import Dict, List, Tuple, Callable, Optional
+import logging
+import json
+from dataclasses import dataclass
+import datetime as dt
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("eternafx_legacy_system.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("EternaFXLegacy")
+
+# ============================================
+# Data Models for Game-to-Real-World Mapping
+# ============================================
+
+@dataclass
+class PlayerAction:
+    """Represents a single player decision in the game"""
+    player_id: str
+    timestamp: dt.datetime
+    action_type: str  # e.g., "resource_allocation", "energy_transition"
+    action_params: Dict
+    faction: str
+    region: str
+
+@dataclass
+class RealWorldFactor:
+    """Maps a game action to real-world sustainability metrics"""
+    name: str
+    baseline: float
+    current_value: float
+    optimal_value: float
+    weight: float
+    uncertainty: float
+    
+class SustainabilityMetrics:
+    """Track and calculate sustainability metrics across multiple dimensions"""
+    
+    def __init__(self):
+        # Initialize core sustainability factors
+        self.factors = {
+            "resource_efficiency": RealWorldFactor("Resource Efficiency", 0.3, 0.3, 1.0, 0.2, 0.05),
+            "renewable_energy": RealWorldFactor("Renewable Energy", 0.2, 0.2, 1.0, 0.25, 0.03),
+            "policy_effectiveness": RealWorldFactor("Policy Effectiveness", 0.4, 0.4, 1.0, 0.15, 0.08),
+            "ai_ethics": RealWorldFactor("AI Ethics & Integration", 0.5, 0.5, 1.0, 0.15, 0.1),
+            "climate_health": RealWorldFactor("Climate Health", 0.3, 0.3, 1.0, 0.25, 0.07)
+        }
+        self.history = {name: [] for name in self.factors.keys()}
+        self.sustainability_index_history = []
+        
+    def update_factor(self, factor_name: str, delta: float):
+        """Update a specific sustainability factor based on player actions"""
+        if factor_name in self.factors:
+            factor = self.factors[factor_name]
+            # Apply bounded update with diminishing returns
+            new_value = factor.current_value + delta
+            # Ensure value remains between 0 and 1 with logarithmic growth toward optimal
+            factor.current_value = max(0, min(1, new_value))
+            self.history[factor_name].append(factor.current_value)
+            logger.debug(f"Updated {factor_name}: {factor.current_value:.4f}")
+        else:
+            logger.warning(f"Unknown factor: {factor_name}")
+    
+    def calculate_sustainability_index(self) -> Tuple[float, float]:
+        """Calculate overall sustainability index and its uncertainty"""
+        weighted_sum = sum(
+            factor.current_value * factor.weight 
+            for factor in self.factors.values()
+        )
+        # Calculate uncertainty as weighted average of individual uncertainties
+        uncertainty = sum(
+            factor.uncertainty * factor.weight
+            for factor in self.factors.values()
+        )
+        self.sustainability_index_history.append(weighted_sum)
+        return weighted_sum, uncertainty
+    
+    def get_improvement_areas(self) -> List[str]:
+        """Identify factors that need the most improvement"""
+        gaps = [(name, factor.optimal_value - factor.current_value) 
+                for name, factor in self.factors.items()]
+        # Sort by gap size (descending)
+        sorted_gaps = sorted(gaps, key=lambda x: x[1], reverse=True)
+        return [name for name, _ in sorted_gaps]
+
+# ================================================
+# Decision Engine - Evaluates Player Choices
+# ================================================
+
+class EternaFXDecisionEngine:
+    """
+    Processes player decisions, evaluates their impact,
+    and provides feedback for optimization.
+    """
+    
+    def __init__(self, metrics: SustainabilityMetrics):
+        self.metrics = metrics
+        self.player_actions_db = []
+        self.decision_models = {
+            "resource_allocation": self._evaluate_resource_allocation,
+            "energy_transition": self._evaluate_energy_transition,
+            "policy_adaptation": self._evaluate_policy_adaptation,
+            "ai_integration": self._evaluate_ai_integration,
+            "climate_action": self._evaluate_climate_action
+        }
+    
+    def log_player_action(self, action: PlayerAction):
+        """Record a player action and process its effects"""
+        self.player_actions_db.append(action)
+        
+        # Process action based on its type
+        if action.action_type in self.decision_models:
+            evaluation_fn = self.decision_models[action.action_type]
+            evaluation_fn(action)
+        else:
+            logger.warning(f"Unknown action type: {action.action_type}")
+    
+    def _evaluate_resource_allocation(self, action: PlayerAction):
+        """Evaluate resource management decisions"""
+        efficiency = action.action_params.get("efficiency", 0)
+        recycling = action.action_params.get("recycling", 0)
+        conservation = action.action_params.get("conservation", 0)
+        
+        # Calculate impact on resource efficiency
+        delta = 0.01 * (efficiency + 1.5 * recycling + conservation)
+        self.metrics.update_factor("resource_efficiency", delta)
+        
+        # Secondary effects
+        self.metrics.update_factor("climate_health", 0.005 * conservation)
+    
+    def _evaluate_energy_transition(self, action: PlayerAction):
+        """Evaluate energy transition decisions"""
+        renewable_investment = action.action_params.get("renewable_investment", 0)
+        efficiency_measures = action.action_params.get("efficiency_measures", 0)
+        grid_modernization = action.action_params.get("grid_modernization", 0)
+        
+        # Calculate impact on renewable energy
+        delta = 0.01 * (1.5 * renewable_investment + efficiency_measures + 0.5 * grid_modernization)
+        self.metrics.update_factor("renewable_energy", delta)
+        
+        # Secondary effects
+        self.metrics.update_factor("climate_health", 0.007 * renewable_investment)
+    
+    def _evaluate_policy_adaptation(self, action: PlayerAction):
+        """Evaluate policy and governance decisions"""
+        regulation_quality = action.action_params.get("regulation_quality", 0)
+        incentive_programs = action.action_params.get("incentive_programs", 0)
+        international_cooperation = action.action_params.get("international_cooperation", 0)
+        
+        # Calculate impact on policy effectiveness
+        delta = 0.01 * (regulation_quality + incentive_programs + 1.2 * international_cooperation)
+        self.metrics.update_factor("policy_effectiveness", delta)
+        
+        # Secondary effects on other factors
+        self.metrics.update_factor("renewable_energy", 0.003 * incentive_programs)
+    
+    def _evaluate_ai_integration(self, action: PlayerAction):
+        """Evaluate AI-human interaction decisions"""
+        ethical_standards = action.action_params.get("ethical_standards", 0)
+        automation_balance = action.action_params.get("automation_balance", 0)
+        transparency = action.action_params.get("transparency", 0)
+        
+        # Calculate impact on AI ethics and integration
+        delta = 0.01 * (1.5 * ethical_standards + automation_balance + transparency)
+        self.metrics.update_factor("ai_ethics", delta)
+        
+        # Secondary effects
+        self.metrics.update_factor("resource_efficiency", 0.004 * automation_balance)
+    
+    def _evaluate_climate_action(self, action: PlayerAction):
+        """Evaluate climate impact decisions"""
+        emissions_reduction = action.action_params.get("emissions_reduction", 0)
+        ecosystem_protection = action.action_params.get("ecosystem_protection", 0)
+        adaptation_measures = action.action_params.get("adaptation_measures", 0)
+        
+        # Calculate impact on climate health
+        delta = 0.01 * (emissions_reduction + 1.3 * ecosystem_protection + adaptation_measures)
+        self.metrics.update_factor("climate_health", delta)
+    
+    def calculate_decision_score(self, action: PlayerAction) -> float:
+        """Calculate a score for a specific decision"""
+        # Extract parameters
+        params = action.action_params
+        # Define weights for different parameters based on action type
+        weights = self._get_weights_for_action(action.action_type)
+        
+        # Calculate weighted sum of parameters
+        score = sum(
+            weights.get(param, 0) * value
+            for param, value in params.items()
+        )
+        return score
+    
+    def _get_weights_for_action(self, action_type: str) -> Dict[str, float]:
+        """Get the appropriate weights for parameters of a specific action type"""
+        weights = {
+            "resource_allocation": {
+                "efficiency": 0.4, 
+                "recycling": 0.4, 
+                "conservation": 0.2
+            },
+            "energy_transition": {
+                "renewable_investment": 0.5, 
+                "efficiency_measures": 0.3, 
+                "grid_modernization": 0.2
+            },
+            "policy_adaptation": {
+                "regulation_quality": 0.3, 
+                "incentive_programs": 0.4, 
+                "international_cooperation": 0.3
+            }, 
+            "ai_integration": {
+                "ethical_standards": 0.4, 
+                "automation_balance": 0.3, 
+                "transparency": 0.3
+            },
+            "climate_action": {
+                "emissions_reduction": 0.4, 
+                "ecosystem_protection": 0.4, 
+                "adaptation_measures": 0.2
+            }
+        }
+        return weights.get(action_type, {})
+    
+    def get_recommendation(self) -> Dict:
+        """Generate recommendations based on current metrics"""
+        improvement_areas = self.metrics.get_improvement_areas()
+        top_area = improvement_areas[0] if improvement_areas else None
+        
+        recommendations = {
+            "resource_efficiency": {
+                "action": "resource_allocation",
+                "focus": "recycling",
+                "rationale": "Investing in circular economy approaches maximizes resource efficiency."
+            },
+            "renewable_energy": {
+                "action": "energy_transition",
+                "focus": "renewable_investment",
+                "rationale": "Accelerating renewable deployment has the highest long-term impact."
+            },
+            "policy_effectiveness": {
+                "action": "policy_adaptation",
+                "focus": "incentive_programs",
+                "rationale": "Market-based incentives have proven most effective for sustainable transitions."
+            },
+            "ai_ethics": {
+                "action": "ai_integration",
+                "focus": "ethical_standards",
+                "rationale": "Establishing robust ethical frameworks prevents unintended consequences."
+            },
+            "climate_health": {
+                "action": "climate_action",
+                "focus": "ecosystem_protection",
+                "rationale": "Ecosystem protection provides multiple co-benefits beyond direct climate impacts."
+            }
+        }
+        
+        return recommendations.get(top_area, {})
+
+# ===================================================
+# Scenario Simulation Engine
+# ===================================================
+
+class ScenarioSimulationEngine:
+    """
+    Simulates long-term impacts of player decisions 
+    through scenario-based forecasting.
+    """
+    
+    def __init__(self, metrics: SustainabilityMetrics, time_horizon: int = 50):
+        self.metrics = metrics
+        self.time_horizon = time_horizon
+        self.baseline_trajectory = None
+        self.scenarios = {}
+    
+    def generate_baseline(self):
+        """Generate a baseline 'business as usual' trajectory"""
+        initial_values = {name: factor.current_value 
+                         for name, factor in self.metrics.factors.items()}
+        trajectory = {name: [value] for name, value in initial_values.items()}
+        
+        # Simple modeling of baseline: slight improvement, then plateau
+        for t in range(1, self.time_horizon):
+            for name in initial_values.keys():
+                current = trajectory[name][-1]
+                # Diminishing returns model
+                if current < 0.5:
+                    delta = 0.005 * (1 - current)
+                else:
+                    delta = 0.002 * (1 - current)
+                trajectory[name].append(current + delta)
+        
+        self.baseline_trajectory = trajectory
+        return trajectory
+    
+    def create_scenario(self, name: str, description: str, parameters: Dict):
+        """Create a new scenario with specific parameters"""
+        if not self.baseline_trajectory:
+            self.generate_baseline()
+        
+        # Copy baseline as starting point
+        scenario_trajectory = {
+            factor: values.copy() 
+            for factor, values in self.baseline_trajectory.items()
+        }
+        
+        # Apply scenario-specific modifications
+        for t in range(1, self.time_horizon):
+            # Apply factor-specific growth rates from parameters
+            for factor, rate_modifier in parameters.get("growth_modifiers", {}).items():
+                if factor in scenario_trajectory:
+                    current = scenario_trajectory[factor][t-1]
+                    # Modified growth with scenario parameters
+                    base_delta = 0.005 * (1 - current)
+                    modified_delta = base_delta * rate_modifier
+                    scenario_trajectory[factor][t] = current + modified_delta
+        
+        # Calculate sustainability index trajectory
+        s_index = []
+        for t in range(self.time_horizon):
+            weighted_sum = sum(
+                scenario_trajectory[name][t] * self.metrics.factors[name].weight
+                for name in scenario_trajectory.keys()
+            )
+            s_index.append(weighted_sum)
+            
+        scenario_trajectory["sustainability_index"] = s_index
+        
+        # Store scenario
+        self.scenarios[name] = {
+            "description": description,
+            "parameters": parameters,
+            "trajectory": scenario_trajectory
+        }
+        
+        return self.scenarios[name]
+    
+    def compare_scenarios(self, scenario_names: List[str]):
+        """Compare multiple scenarios based on sustainability index"""
+        if not self.baseline_trajectory:
+            self.generate_baseline()
+        
+        comparison = {"baseline": []}
+        
+        # Calculate baseline sustainability index
+        for t in range(self.time_horizon):
+            weighted_sum = sum(
+                self.baseline_trajectory[name][t] * self.metrics.factors[name].weight
+                for name in self.baseline_trajectory.keys()
+            )
+            comparison["baseline"].append(weighted_sum)
+        
+        # Add requested scenarios
+        for name in scenario_names:
+            if name in self.scenarios:
+                comparison[name] = self.scenarios[name]["trajectory"]["sustainability_index"]
+        
+        return comparison
+    
+    def optimize_strategy(self, constraints: Dict = None) -> Dict:
+        """
+        Optimize decision parameters to maximize sustainability
+        given optional constraints
+        """
+        if constraints is None:
+            constraints = {}
+        
+        # Define bounds for each parameter (default: 0-10)
+        bounds = []
+        param_names = []
+        
+        # Building parameter list from all action types
+        for action_type in ["resource_allocation", "energy_transition", 
+                           "policy_adaptation", "ai_integration", "climate_action"]:
+            if action_type == "resource_allocation":
+                param_names.extend(["efficiency", "recycling", "conservation"])
+                bounds.extend([(0, 10), (0, 10), (0, 10)])
+            elif action_type == "energy_transition":
+                param_names.extend(["renewable_investment", "efficiency_measures", "grid_modernization"])
+                bounds.extend([(0, 10), (0, 10), (0, 10)])
+            elif action_type == "policy_adaptation":
+                param_names.extend(["regulation_quality", "incentive_programs", "international_cooperation"])
+                bounds.extend([(0, 10), (0, 10), (0, 10)])
+            elif action_type == "ai_integration":
+                param_names.extend(["ethical_standards", "automation_balance", "transparency"])
+                bounds.extend([(0, 10), (0, 10), (0, 10)])
+            elif action_type == "climate_action":
+                param_names.extend(["emissions_reduction", "ecosystem_protection", "adaptation_measures"])
+                bounds.extend([(0, 10), (0, 10), (0, 10)])
+                
+        # If specific constraints provided, update bounds
+        for i, param in enumerate(param_names):
+            if param in constraints:
+                bounds[i] = constraints[param]
+        
+        # Objective function to maximize sustainability
+        def objective(x):
+            # Map param values to their effects on factors
+            factor_deltas = {
+                "resource_efficiency": 0.01 * (x[0] + 1.5 * x[1] + x[2]),
+                "renewable_energy": 0.01 * (1.5 * x[3] + x[4] + 0.5 * x[5]),
+                "policy_effectiveness": 0.01 * (x[6] + x[7] + 1.2 * x[8]),
+                "ai_ethics": 0.01 * (1.5 * x[9] + x[10] + x[11]),
+                "climate_health": 0.01 * (x[12] + 1.3 * x[13] + x[14])
+            }
+            
+            # Start from current values
+            projected_values = {
+                name: factor.current_value + factor_deltas.get(name, 0)
+                for name, factor in self.metrics.factors.items()
+            }
+            
+            # Apply bounds
+            projected_values = {
+                name: max(0, min(1, value))
+                for name, value in projected_values.items()
+            }
+            
+            # Calculate projected sustainability
+            projected_score = sum(
+                projected_values[name] * self.metrics.factors[name].weight
+                for name in projected_values.keys()
+            )
+            
+            # We want to maximize, so return negative
+            return -projected_score
+        
+        # Run optimization
+        result = optimize.minimize(objective, x0=[5] * len(param_names), 
+                                   bounds=bounds, method='SLSQP')
+        
+        # Parse results into more readable format
+        optimized_params = {}
+        for i, param in enumerate(param_names):
+            optimized_params[param] = result.x[i]
+        
+        # Group by action type
+        optimized_strategy = {
+            "resource_allocation": {
+                "efficiency": optimized_params["efficiency"],
+                "recycling": optimized_params["recycling"],
+                "conservation": optimized_params["conservation"]
+            },
+            "energy_transition": {
+                "renewable_investment": optimized_params["renewable_investment"],
+                "efficiency_measures": optimized_params["efficiency_measures"],
+                "grid_modernization": optimized_params["grid_modernization"]
+            },
+            "policy_adaptation": {
+                "regulation_quality": optimized_params["regulation_quality"],
+                "incentive_programs": optimized_params["incentive_programs"],
+                "international_cooperation": optimized_params["international_cooperation"]
+            },
+            "ai_integration": {
+                "ethical_standards": optimized_params["ethical_standards"],
+                "automation_balance": optimized_params["automation_balance"],
+                "transparency": optimized_params["transparency"]
+            },
+            "climate_action": {
+                "emissions_reduction": optimized_params["emissions_reduction"],
+                "ecosystem_protection": optimized_params["ecosystem_protection"],
+                "adaptation_measures": optimized_params["adaptation_measures"]
+            },
+            "projected_sustainability": -result.fun  # Convert back from negative
+        }
+        
+        return optimized_strategy
+
+# ===================================================
+# Visualization Layer
+# ===================================================
+
+class VisualizationLayer:
+    """
+    Creates visual representations of player actions, 
+    sustainability metrics, and scenario projections.
+    """
+    
+    def __init__(self, metrics: SustainabilityMetrics, engine: ScenarioSimulationEngine):
+        self.metrics = metrics
+        self.engine = engine
+        self.style_config = {
+            "palette": "viridis",
+            "figure_size": (12, 8),
+            "title_fontsize": 16,
+            "axis_fontsize": 12
+        }
+        # Set style 
+        sns.set_theme(style="whitegrid")
+        
+    def plot_sustainability_dashboard(self):
+        """Create a comprehensive dashboard of current sustainability metrics"""
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle("EternaFX Sustainability Dashboard", 
+                    fontsize=self.style_config["title_fontsize"] + 2)
+        
+        # Current factors radar chart (top left)
+        self._plot_radar_chart(axes[0, 0])
+        
+        # Historical sustainability index (top right)
+        self._plot_sustainability_history(axes[0, 1])
+        
+        # Factor history (bottom left)
+        self._plot_factor_history(axes[1, 0])
+        
+        # Scenario projections (bottom right)
+        self._plot_scenario_projections(axes[1, 1])
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.92, wspace=0.3, hspace=0.3)
+        return fig
+    
+    def _plot_radar_chart(self, ax):
+        """Create a radar chart of current sustainability factors"""
+        # Get factors and values
+        factors = list(self.metrics.factors.keys())
+        values = [self.metrics.factors[f].current_value for f in factors]
+        
+        # Number of variables
+        N = len(factors)
+        
+        # Create angle for each variable
+        angles = [n / float(N) * 2 * np.pi for n in range(N)]
+        angles += angles[:1]  # Close the loop
+        
+        # Add values (and close the loop)
+        values += values[:1]
+        
+        # Draw the plot
+        ax.plot(angles, values, linewidth=2, linestyle='solid')
+        ax.fill(angles, values, alpha=0.1)
+        
+        # Fix axis
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels([f.replace('_', ' ').title() for f in factors])
+        ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+        ax.set_title("Current Sustainability Factors", 
+                    fontsize=self.style_config["title_fontsize"])
+        
+        # Add aesthetics
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        ax.set_ylim(0, 1)
+    
+    def _plot_sustainability_history(self, ax):
+        """Plot historical sustainability index"""
+        if not self.metrics.sustainability_index_history:
+            ax.text(0.5, 0.5, "No historical data available yet", 
+                  horizontalalignment='center', verticalalignment='center')
+            ax.set_title("Sustainability Index History", 
+                       fontsize=self.style_config["title_fontsize"])
+            return
+            
+        times = list(range(len(self.metrics.sustainability_index_history)))
+        ax.plot(times, self.metrics.sustainability_index_history, 
+               marker='o', linestyle='-', linewidth=2)
+        
+        ax.set_xlabel("Time Steps", fontsize=self.style_config["axis_fontsize"])
+        ax.set_ylabel("Sustainability Index", fontsize=self.style_config["axis_fontsize"])
+        ax.set_title("Sustainability Index History", 
+                   fontsize=self.style_config["title_fontsize"])
+        ax.grid(True, linestyle='--', alpha=0.7)
+    
+    def _plot_factor_history(self, ax):
+        """Plot historical trends of all factors"""
+        # Check if we have data
+        if not any(self.metrics.history.values()):
+            ax.text(0.5, 0.5, "No historical data available yet", 
+                  horizontalalignment='center', verticalalignment='center')
+            ax.set_title("Factor History", fontsize=self.style_config["title_fontsize"])
+            return
+            
+        for factor, values in self.metrics.history.items():
+            if values:  # Only plot if we have data
+                times = list(range(len(values)))
+                ax.plot(times, values, label=factor.replace('_', ' ').title())
+        
+        ax.set_xlabel("Time Steps", fontsize=self.style_config["axis_fontsize"])
+        ax.set_ylabel("Factor Value", fontsize=self.style_config["axis_fontsize"])
+        ax.set_title("Factor History", fontsize=self.style_config["title_fontsize"])
+        ax.legend(loc='best')
+        ax.grid(True, linestyle='--', alpha=0.7)
+    
+    def _plot_scenario_projections(self, ax):
+        """Plot scenario projections"""
+        # Generate baseline if needed
+        if not self.engine.baseline_trajectory:
+            self.engine.generate_baseline()
+        
+        # Calculate baseline sustainability index
+        baseline_index = []
+        for t in range(self.engine.time_horizon):
+            weighted_sum = sum(
+                self.engine.baseline_trajectory[name][t] * self.metrics.factors[name].weight
+                for name in self.engine.baseline_trajectory.keys()
+            )
+            baseline_index.append(weighted_sum)
+        
+        # Plot baseline
+        time_steps = list(range(self.engine.time_horizon))
+        ax.plot(time_steps, baseline_index, label="Baseline", 
+               linestyle='--', linewidth=2)
+        
+        # Plot each scenario
+        for name, scenario in self.engine.scenarios.items():
+            if "sustainability_index" in scenario["trajectory"]:
+                ax.plot(time_steps, scenario["trajectory"]["sustainability_index"], 
+                       label=name)
+        
+        ax.set_xlabel("Years", fontsize=self.style_config["axis_fontsize"])
+        ax.set_ylabel("Sustainability Index", fontsize=self.style_config["axis_fontsize"])
+        ax.set_title("Scenario Projections", fontsize=self.style_config["title_fontsize"])
+        ax.legend(loc='best')
+        ax.grid(True, linestyle='--', alpha=0.7)
+    
+    def create_scenario_comparison_chart(self, scenario_names: List[str], save_path: Optional[str] = None):
+        """Create a dedicated chart comparing specific scenarios"""
+        comparison = self.engine.compare_scenarios(scenario_names)
+        
+        plt.figure(figsize=self.style_config["figure_size"])
+        time_steps = list(range(self.engine.time_horizon))
+        
+        # Plot baseline first
+        plt.plot(time_steps, comparison["baseline"], 
+                label="Baseline", linestyle='--', linewidth=2, color='gray')
+        
+        # Plot each scenario with a distinct color
+        colors = plt.cm.viridis(np.linspace(0, 1, len(scenario_names)))
+        for i, name in enumerate(scenario_names):
+            if name in comparison:
+                plt.plot(time_steps, comparison[name], 
+                        label=name, linewidth=2, color=colors[i])
+        
+        plt.xlabel("Years")
+        plt.ylabel("Sustainability Index")
+        plt.title("Scenario Comparison: Sustainability Trajectories")
+        plt.legend(loc='best')
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            
+        return plt.gcf()
+    
+    def create_strategy_visualization(self, strategy: Dict, save_path: Optional[str] = None):
+        """Visualize an optimized strategy across action categories"""
+        # Extract data
+        action_types = []
+        parameter_groups = []
+        
+        for action_type, params in strategy.items():
+            if action_type != "projected_sustainability":
+                action_types.append(action_type)
+                parameter_groups.append(params)
+        
+        # Setup plot
+        n_groups = len(action_types)
+        fig, axes = plt.subplots(n_groups, 1, figsize=(12, 3*n_groups))
+        if n_groups == 1:
+            axes = [axes]  # Ensure axes is iterable
+            
+        for i, (action_type, params) in enumerate(zip(action_types, parameter_groups)):
+            ax = axes[i]
+            param_names = list(params.keys())
+            param_values = list(params.values())
+            
+            # Create bar plot
+            bars = ax.bar(range(len(param_names)), param_values, 
+                        color=plt.cm.viridis(np.linspace(0, 0.8, len(param_names))))
+            
+            # Customize plot
+            ax.set_xticks(range(len(param_names)))
+            ax.set_xticklabels([p.replace('_', ' ').title() for p in param_names])
+            ax.set_ylabel("Priority Score (0-10)")
+            ax.set_title(f"{action_type.replace('_', ' ').title()} Strategy")
+            ax.set_ylim(0, 10.5)
+            
+            # Add value labels
+            for bar in bars:
+                height = bar.get_height()
+                ax.annotate(f'{height:.1f}',
+                           xy=(bar.get_x() + bar.get_width()/2, height),
+                           xytext=(0, 3),  # 3 points vertical offset
+                           textcoords="offset points",
+                           ha='center', va='bottom')
+        
+        plt.suptitle("Optimized Sustainability Strategy", 
+                    fontsize=16, y=0.99)
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            
+        return fig
+
+# ===================================================
+# EternaFX Real-World Legacy System - Main Class
+# ===================================================
+
+class EternaFXRealWorldLegacy:
+    """
+    Main class integrating all components of the EternaFX Real-World Legacy System.
+    Provides an interface to the EternaFX Framework.
+    """
+    
+    def __init__(self):
+        # Initialize all components
+        self.metrics = SustainabilityMetrics()
+        self.decision_engine = EternaFXDecisionEngine(self.metrics)
+        self.simulation_engine = ScenarioSimulationEngine(self.metrics)
+        self.visualization = VisualizationLayer(self.metrics, self.simulation_engine)
+        
+        # For data export/import
+        self.data_repository = {
+            "actions": [],
+            "metrics_history": {},
+            "scenarios": {}
+        }
