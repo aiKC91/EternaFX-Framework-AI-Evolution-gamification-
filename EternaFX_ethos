@@ -1,0 +1,85 @@
+import numpy as np
+
+# Constants optimized for mobile
+DOMAIN_SIZE = 8               # Smaller domain for reduced computation
+DT = 0.02                     # Increased time step to reduce iterations
+DX = 1.0 / DOMAIN_SIZE        # Spatial step size
+INITIAL_LAMBDA = 0.1          # Initial ethical adjustment factor
+TAU_SOCIETY = 0.8             # Societal threshold for ethos weights
+SIGMA = 0.1                   # Volatility parameter
+BETA = 0.5                    # Harmony-chaos balance factor
+GAMMA = 0.3                   # Zeta dynamics factor
+EPSILON = 0.2                 # Scenario generation factor
+ETA = 0.1                     # User prompt factor
+SIGMA_DP = 0.005              # Differential privacy noise scale
+LAMBDA_FAIR = 0.1             # Fairness penalty weight
+ALPHA_STAKEHOLDER = 0.2       # Stakeholder blending factor
+
+class EthicalGovernor:
+    def __init__(self):
+        self.lambda_total = INITIAL_LAMBDA
+        self.harmony_score = 1.0
+        self.chaos_score = 0.0
+        self.ethos_weights = {'SDG13': 0.2, 'SDG7': 0.15, 'SDG16': 0.15, 'Others': 0.5/14}
+
+    def update_ethos_weights(self, step):
+        """Update ethos weights with noise every 5 steps."""
+        if step % 5 == 0:
+            for key in self.ethos_weights:
+                self.ethos_weights[key] += np.clip(np.random.normal(0, SIGMA_DP), -0.01, 0.01)
+            total = sum(self.ethos_weights.values())
+            self.ethos_weights = {k: v / total for k, v in self.ethos_weights.items()}
+        return self.ethos_weights
+
+    def update(self, H_new, C_new):
+        """Update ethical governor based on harmony and chaos scores."""
+        self.harmony_score = H_new
+        self.chaos_score = C_new
+        if H_new - C_new < 0:
+            self.lambda_total = min(1.0, self.lambda_total * 1.1)
+        elif H_new - C_new > 0.1:
+            self.lambda_total = max(0.01, self.lambda_total * 0.9)
+
+class EternaFXSolver:
+    def __init__(self):
+        self.n = DOMAIN_SIZE
+        self.dt = DT
+        self.dx = DX
+        self.state = {
+            'psi_cons': np.ones((DOMAIN_SIZE, DOMAIN_SIZE)) * 0.5,
+            's': np.zeros((DOMAIN_SIZE, DOMAIN_SIZE)),
+            'p': np.zeros((DOMAIN_SIZE, DOMAIN_SIZE))
+        }
+        self.ethical_governor = EthicalGovernor()
+        self.ai_agents = [np.ones(4) * 0.5 for _ in range(3)]
+        self.alpha_weights = np.array([0.3, 0.4, 0.3])
+
+    def compute_turbulence(self):
+        """Compute a simple turbulence metric."""
+        return 0.1 * np.random.uniform()
+
+    def time_step(self, step):
+        """Perform one simulation step."""
+        s_prev = self.state['s'].copy()
+        ai_contribution = sum(alpha * agent for alpha, agent in zip(self.alpha_weights, self.ai_agents))
+        adjusted_a = ai_contribution + np.random.normal(0, 0.01, ai_contribution.shape)
+        H_new = 1.0 - 0.1 * np.linalg.norm(adjusted_a - np.ones(4) * 0.8)
+        C_new = self.compute_turbulence()
+        self.ethical_governor.update(H_new, C_new)
+        self.state['psi_cons'] += self.dt * (H_new - C_new)
+        self.state['s'] += self.dt * 0.05
+        self.state['p'] += self.dt * 0.02
+        self.ethical_governor.update_ethos_weights(step)
+
+    def run_simulation(self, steps=10):
+        """Run the simulation for a specified number of steps."""
+        for step in range(steps):
+            self.time_step(step)
+        return self.state, self.ethical_governor.lambda_total, self.ethical_governor.ethos_weights
+
+# Run optimized simulation
+if __name__ == "__main__":
+    solver = EternaFXSolver()
+    final_state, final_lambda, final_ethos_weights = solver.run_simulation(steps=10)
+    print(f"Final λ_total: {final_lambda:.3f}")
+    print(f"Final Ethos Weights: {final_ethos_weights}")
