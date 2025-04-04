@@ -1,0 +1,98 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import asyncio
+import platform
+
+# Constants
+GRID_SIZE = 32  # 2D grid for fluid simulation
+TIME_STEPS = 100  # Number of simulation steps
+FPS = 30  # Frames per second for controlled execution
+VISCOSITY = 0.01  # Fluid viscosity
+DT = 0.1  # Time step size
+
+# Global variables for simulation state
+u = np.zeros((GRID_SIZE, GRID_SIZE))  # x-velocity (fluid)
+v = np.zeros((GRID_SIZE, GRID_SIZE))  # y-velocity (fluid)
+psi_cons = np.random.rand(GRID_SIZE, GRID_SIZE) * 0.1  # Consciousness gradient
+fMRI_synthetic = np.sin(np.linspace(0, 2 * np.pi, GRID_SIZE))  # Synthetic fMRI signal for validation
+
+def setup():
+    """Initialize the simulation with a perturbation in the fluid and consciousness field."""
+    global u, v, psi_cons
+    x, y = np.meshgrid(np.arange(GRID_SIZE), np.arange(GRID_SIZE))
+    # Add a vortex-like perturbation to fluid velocity
+    u += 0.5 * np.sin(2 * np.pi * x / GRID_SIZE) * np.cos(2 * np.pi * y / GRID_SIZE)
+    v += 0.5 * np.cos(2 * np.pi * x / GRID_SIZE) * np.sin(2 * np.pi * y / GRID_SIZE)
+    # Initialize consciousness gradient with small noise
+    psi_cons += np.sin(np.pi * x / GRID_SIZE) * 0.2
+
+def diffuse(field):
+    """Apply diffusion to a field (e.g., velocity or consciousness gradient)."""
+    field_new = field.copy()
+    for _ in range(4):  # Iterative diffusion
+        field_new[1:-1, 1:-1] = (field[1:-1, 1:-1] + VISCOSITY * (
+            field[2:, 1:-1] + field[:-2, 1:-1] + field[1:-1, 2:] + field[1:-1, :-2] - 4 * field[1:-1, 1:-1]
+        ))
+        field = field_new.copy()
+    return field_new
+
+def advect(field, u_field, v_field):
+    """Advect a field using fluid velocities."""
+    x, y = np.meshgrid(np.arange(GRID_SIZE), np.arange(GRID_SIZE))
+    x_new = np.clip(x - DT * u_field, 0, GRID_SIZE - 1)
+    y_new = np.clip(y - DT * v_field, 0, GRID_SIZE - 1)
+    return field[x_new.astype(int), y_new.astype(int)]
+
+def update_fluid():
+    """Update fluid dynamics using a simplified Navier-Stokes approach."""
+    global u, v
+    u = diffuse(u)
+    v = diffuse(v)
+    u = advect(u, u, v)
+    v = advect(v, u, v)
+
+def update_consciousness():
+    """Update consciousness gradient influenced by fluid dynamics."""
+    global psi_cons
+    grad_u = np.gradient(u)[0]  # Gradient of x-velocity
+    psi_cons += DT * (grad_u * 0.1)  # Couple fluid turbulence to consciousness
+    psi_cons = diffuse(psi_cons)  # Apply diffusion to consciousness field
+    psi_cons = np.clip(psi_cons, -1, 1)  # Keep bounded
+
+def validate_against_fmri():
+    """Validate consciousness gradient against synthetic fMRI data."""
+    global psi_cons
+    psi_mean = np.mean(psi_cons, axis=1)  # Average across rows
+    correlation = np.corrcoef(psi_mean, fMRI_synthetic)[0, 1]
+    return correlation
+
+def update_loop():
+    """Single step of the simulation."""
+    update_fluid()
+    update_consciousness()
+    correlation = validate_against_fmri()
+    return correlation
+
+async def main():
+    """Main simulation loop with visualization."""
+    setup()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+    for t in range(TIME_STEPS):
+        correlation = update_loop()
+        if t % 10 == 0:  # Update plot every 10 steps
+            ax1.clear()
+            ax2.clear()
+            ax1.imshow(u, cmap='viridis')
+            ax1.set_title(f"Fluid Velocity (t={t})")
+            ax2.imshow(psi_cons, cmap='plasma')
+            ax2.set_title(f"Consciousness Gradient (Corr={correlation:.2f})")
+            plt.pause(0.01)  # Brief pause for rendering
+        await asyncio.sleep(1.0 / FPS)  # Control execution speed
+    plt.show()
+
+# Run the simulation based on environment
+if platform.system() == "Emscripten":
+    asyncio.ensure_future(main())
+else:
+    if __name__ == "__main__":
+        asyncio.run(main())
