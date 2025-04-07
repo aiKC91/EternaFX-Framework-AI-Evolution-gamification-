@@ -1,0 +1,235 @@
+# ===============================================================
+# ENHANCEMENT 1: IMPROVED RIEMANN REGULATOR
+# ===============================================================
+
+class EnhancedRegulator:
+    """Advanced Riemann regulator with multiple variants and adaptive smoothing"""
+    
+    def __init__(self, Lambda: float = 10.0, variant: str = 'standard', 
+                smoothing: str = 'adaptive'):
+        self.Lambda = Lambda
+        self.variant = variant
+        self.smoothing = smoothing
+        self._cache = {}
+        
+        # Initialize surrogate model if needed
+        if variant == 'ml-enhanced':
+            self.surrogate = ZetaSurrogateModel()
+            self.surrogate.load_pretrained()
+    
+    def __call__(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
+        """Compute regulator with enhanced numerical stability"""
+        # Handle array inputs
+        if isinstance(x, np.ndarray):
+            return np.vectorize(self._compute_single)(x)
+            
+        return self._compute_single(x)
+    
+    def _compute_single(self, x: float) -> float:
+        """Compute regulator for a single value"""
+        # Check cache first
+        if x in self._cache:
+            return self._cache[x]
+            
+        # Handle edge cases
+        if x <= 0:
+            return 0.0
+            
+        try:
+            if self.variant == 'ml-enhanced':
+                zeta_val = self.surrogate.predict_zeta(0.5 + 1j*x)
+            else:
+                zeta_val = efficient_zeta(0.5 + 1j*x)
+                
+            # Core calculation
+            if self.variant == 'standard':
+                abs_zeta_sq = abs(zeta_val)**2
+                numerator = abs_zeta_sq - 1
+                denominator = abs_zeta_sq + 1
+                osc_term = np.cos(np.pi * np.log(x)/np.log(self.Lambda))
+                result = (numerator / denominator) * osc_term
+            elif self.variant == 'smooth':
+                # ... (other variants) ...
+            
+            # Apply smoothing
+            if self.smoothing == 'adaptive':
+                result *= np.exp(-x/(2*self.Lambda**2))
+                
+            # Cache result
+            self._cache[x] = result
+            return result
+            
+        except Exception as e:
+            print(f"Error computing regulator at x={x}: {str(e)}")
+            return 0.0
+
+# ===============================================================
+# ENHANCEMENT 2: OPTIMIZED LATTICE SIMULATION
+# ===============================================================
+
+class OptimizedLattice(LatticeSimulation):
+    """Enhanced lattice simulation with vectorized updates and GPU optimization"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._precompute_regulator()
+        
+    def _precompute_regulator(self):
+        """Precompute regulator values for common field values"""
+        x_values = np.linspace(0, 100, 1000)
+        self.regulator_lookup = RegularGridInterpolator(
+            (x_values,), 
+            riemann_regulator(x_values, self.params.Lambda, self.params.regulator_variant),
+            bounds_error=False,
+            fill_value=0.0
+        )
+    
+    def vectorized_action(self, phi: np.ndarray) -> float:
+        """Vectorized action computation using precomputed regulator"""
+        # Vectorized kinetic term calculation
+        shifts = [np.roll(phi, -1, axis=i) for i in range(phi.ndim)]
+        kinetic = 0.5 * sum(np.sum((shift - phi)**2) for shift in shifts)
+        
+        # Vectorized potential terms
+        phi_sq = phi**2
+        x = phi_sq / self.params.Lambda**2
+        
+        # Use precomputed regulator values
+        R = self.regulator_lookup(x)
+        regulator_term = (self.params.eta/6) * np.sum(phi_sq * R)
+        
+        return kinetic + 0.5*self.params.m_sq*np.sum(phi_sq) + \
+               (self.params.lambda_/24)*np.sum(phi**4) + regulator_term
+    
+    def parallel_metropolis(self, n_steps: int = 1000, 
+                          block_size: int = 32) -> None:
+        """Block-based parallel Metropolis updates"""
+        # Implementation using GPU-accelerated block updates
+        if self.use_gpu:
+            self._gpu_parallel_update(n_steps, block_size)
+        else:
+            self._cpu_parallel_update(n_steps, block_size)
+
+# ===============================================================
+# ENHANCEMENT 3: ADVANCED ML COMPONENTS
+# ===============================================================
+
+class EnhancedZetaSurrogate(ZetaSurrogateModel):
+    """Improved surrogate model with attention mechanisms"""
+    
+    def _create_model(self) -> tf.keras.Model:
+        """Create transformer-based architecture"""
+        inputs = tf.keras.Input(shape=(2,))
+        x = tf.keras.layers.Dense(128, activation='swish')(inputs)
+        x = tf.keras.layers.MultiHeadAttention(num_heads=4, key_dim=16)(x, x)
+        x = tf.keras.layers.Dense(256, activation='swish')(x)
+        outputs = tf.keras.layers.Dense(2)(x)
+        
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        model.compile(optimizer='adam', loss='mse')
+        return model
+        
+    def quantize_model(self) -> None:
+        """Apply quantization-aware training for faster inference"""
+        # ... quantization implementation ...
+
+# ===============================================================
+# ENHANCEMENT 4: EXPANDED EXPERIMENTAL VALIDATION
+# ===============================================================
+
+class ExperimentalAnalyzer:
+    """Toolkit for comparing predictions with experimental data"""
+    
+    def __init__(self, params: EternaFXParameters):
+        self.params = params
+        self.experimental_data = {}
+        
+    def load_dataset(self, dataset_name: str) -> None:
+        """Load experimental dataset from file"""
+        # Supported datasets: 'dirac_semimetals', 'e+e-_collisions'
+        # ... implementation ...
+    
+    def calculate_chi_squared(self) -> float:
+        """Compute goodness-of-fit metric"""
+        # ... implementation comparing predictions with data ...
+    
+    def generate_report(self) -> dict:
+        """Generate comprehensive validation report"""
+        report = {
+            'parameters': vars(self.params),
+            'chi_squared': self.calculate_chi_squared(),
+            'resonance_matches': self.find_resonance_matches()
+        }
+        return report
+
+# ===============================================================
+# ENHANCEMENT 5: INTERACTIVE VISUALIZATION
+# ===============================================================
+
+class InteractiveVisualizer:
+    """Interactive 3D visualization of propagator structure"""
+    
+    def __init__(self, params: EternaFXParameters):
+        self.params = params
+        self.fig = plt.figure(figsize=(12, 8))
+        self.ax = self.fig.add_subplot(111, projection='3d')
+        
+    def plot_propagator_surface(self, k_max: float = 5.0) -> None:
+        """3D surface plot of propagator magnitude"""
+        k_values = np.linspace(-k_max, k_max, 100)
+        Kx, Ky = np.meshgrid(k_values, k_values)
+        propagator = np.zeros_like(Kx, dtype=complex)
+        
+        for i in range(Kx.shape[0]):
+            for j in range(Kx.shape[1]):
+                k = complex(Kx[i,j], Ky[i,j])
+                propagator[i,j] = modified_propagator(
+                    k**2, self.params.m_sq, 
+                    self.params.eta, self.params.Lambda
+                )
+        
+        # Create surface plot
+        self.ax.plot_surface(Kx, Ky, np.abs(propagator),
+                           cmap='viridis', edgecolor='none')
+        self.ax.set_xlabel('Re(k)')
+        self.ax.set_ylabel('Im(k)')
+        self.ax.set_zlabel('|G(k)|')
+        plt.title('3D Propagator Structure')
+
+# ===============================================================
+# USAGE EXAMPLE
+# ===============================================================
+
+if __name__ == "__main__":
+    # Initialize enhanced parameters
+    params = EternaFXParameters(
+        m_sq=1.0,
+        lambda_=0.1,
+        eta=0.05,
+        Lambda=10.0,
+        regulator_variant='ml-enhanced'
+    )
+    
+    # Create optimized lattice simulation
+    lattice = OptimizedLattice(params, lattice_size=64, use_gpu=True)
+    
+    # Thermalization phase
+    print("Thermalizing system...")
+    lattice.parallel_metropolis(n_steps=1000)
+    
+    # Production run
+    print("Production run...")
+    lattice.parallel_metropolis(n_steps=5000)
+    
+    # Analyze results
+    distances, correlations = lattice.measure_correlation_function()
+    
+    # Experimental validation
+    analyzer = ExperimentalAnalyzer(params)
+    analyzer.load_dataset('dirac_semimetals')
+    report = analyzer.generate_report()
+    
+    # Interactive visualization
+    visualizer = InteractiveVisualizer(params)
+    visualizer.plot_propagator_surface()
+    plt.show()
