@@ -1,0 +1,184 @@
+import numpy as np
+from mpmath import zeta, mp
+
+# Set precision for mpmath
+mp.dps = 30  # 30 digits of precision
+
+class RiemannRegulator:
+    """
+    Enhanced implementation of the Riemann regulator for EternaFX framework.
+    Implements various regulator variants and provides efficient caching.
+    """
+    def __init__(self, Lambda, variant='standard', cache_size=1000):
+        """
+        Initialize the Riemann regulator.
+        
+        Parameters:
+        -----------
+        Lambda : float
+            Cutoff scale parameter
+        variant : str, optional
+            Type of regulator ('standard', 'simplified', or 'extended')
+        cache_size : int, optional
+            Maximum size for the zeta function cache
+        """
+        self.Lambda = Lambda
+        self.variant = variant
+        self.zeta_cache = {}  # Cache for efficiency
+        self.cache_size = cache_size
+        
+    def clear_cache(self):
+        """Clear the zeta function cache."""
+        self.zeta_cache = {}
+        
+    def compute_zeta(self, s):
+        """
+        Compute zeta(s) with caching for efficiency.
+        
+        Parameters:
+        -----------
+        s : complex
+            Input to the zeta function, typically s = 1/2 + i*t
+            
+        Returns:
+        --------
+        complex
+            The value of zeta(s)
+        """
+        # Convert to hashable form for caching
+        s_key = (float(s.real), float(s.imag))
+        
+        if s_key not in self.zeta_cache:
+            if len(self.zeta_cache) >= self.cache_size:
+                # Simple cache clearing strategy - just reset when full
+                self.zeta_cache = {}
+            
+            # Compute zeta(s) using mpmath's high-precision implementation
+            self.zeta_cache[s_key] = complex(zeta(s))
+            
+        return self.zeta_cache[s_key]
+
+    def riemann_regulator(self, x):
+        """
+        Compute the Riemann regulator R(x).
+        
+        Parameters:
+        -----------
+        x : float
+            Dimensionless parameter (typically φ²/Λ²)
+            
+        Returns:
+        --------
+        float
+            Value of the regulator R(x)
+        """
+        # Handle edge case for non-positive x
+        if x <= 0:
+            return 0.0
+            
+        # s lies on the critical line
+        s = complex(0.5, x)
+        
+        # Get zeta(s) from cache or compute it
+        zeta_s = self.compute_zeta(s)
+        abs_zeta_sq = (zeta_s.real**2 + zeta_s.imag**2)
+        
+        if self.variant == 'standard':
+            # Standard variant: R(x) = [(|ζ(s)|² - 1)/(|ζ(s)|² + 1)] * cos(π*log(x)/log(Λ))
+            if abs_zeta_sq == 0:  # Handle zeros of zeta
+                regulator_factor = -1.0
+            else:
+                regulator_factor = (abs_zeta_sq - 1) / (abs_zeta_sq + 1)
+                
+            # Oscillatory term
+            osc_term = np.cos(np.pi * np.log(x) / np.log(self.Lambda))
+            return regulator_factor * osc_term
+            
+        elif self.variant == 'simplified':
+            # Simplified variant: R(x) = |ζ(s)|⁻² - 1
+            if abs_zeta_sq == 0:  # Handle zeros of zeta
+                return float('inf')  # Divergent at zeros
+            return 1.0/abs_zeta_sq - 1.0
+            
+        elif self.variant == 'extended':
+            # Extended variant with phase information: R(x) = Re[1/ζ(s)] - 1
+            if abs_zeta_sq == 0:  # Handle zeros of zeta
+                return float('inf')  # Divergent at zeros
+            return (zeta_s.real / abs_zeta_sq) - 1.0
+            
+        else:
+            raise ValueError(f"Unknown regulator variant: {self.variant}")
+
+    def compute_batch(self, x_values):
+        """
+        Vectorized computation of R(x) for multiple values.
+        
+        Parameters:
+        -----------
+        x_values : array_like
+            Array of x values to compute R(x) for
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Array of R(x) values
+        """
+        return np.array([self.riemann_regulator(float(x)) for x in x_values])
+        
+    def regulator_derivative(self, x, epsilon=1e-6):
+        """
+        Compute numerical derivative of R(x) with respect to x.
+        
+        Parameters:
+        -----------
+        x : float
+            Point at which to evaluate the derivative
+        epsilon : float, optional
+            Small increment for finite difference approximation
+            
+        Returns:
+        --------
+        float
+            Numerical derivative of R(x)
+        """
+        if x <= epsilon:
+            # Forward difference for x near zero
+            return (self.riemann_regulator(2*epsilon) - self.riemann_regulator(epsilon)) / epsilon
+        else:
+            # Central difference otherwise
+            return (self.riemann_regulator(x + epsilon) - self.riemann_regulator(x - epsilon)) / (2 * epsilon)
+
+# Example usage
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    
+    # Create a regulator with cutoff Λ = 10
+    reg = RiemannRegulator(Lambda=10.0)
+    
+    # Generate x values (including the first few Riemann zeros)
+    x_values = np.linspace(1, 50, 1000)
+    
+    # First few non-trivial zeros of zeta on the critical line
+    riemann_zeros = [14.1347, 21.0220, 25.0109, 30.4249, 32.9351]
+    
+    # Compute R(x)
+    reg_values = reg.compute_batch(x_values)
+    
+    # Plot the regulator function
+    plt.figure(figsize=(12, 6))
+    plt.plot(x_values, reg_values, 'b-', lw=2)
+    
+    # Mark the zeros of the Riemann zeta function
+    for zero in riemann_zeros:
+        if zero <= max(x_values):
+            plt.axvline(x=zero, color='r', linestyle='--', alpha=0.5)
+            plt.text(zero+0.5, 0.8, f't={zero:.4f}', rotation=90)
+    
+    plt.grid(True, alpha=0.3)
+    plt.title('Riemann Regulator Function R(x)')
+    plt.xlabel('x = t (imaginary part of s = 1/2 + it)')
+    plt.ylabel('R(x)')
+    plt.ylim(-1.2, 1.2)
+    
+    plt.tight_layout()
+    plt.show()
