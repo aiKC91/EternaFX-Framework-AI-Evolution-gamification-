@@ -1,0 +1,387 @@
+import React, { useState, useEffect } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+// Function to calculate F_ζ for a given momentum squared
+function calculateFZeta(pSquared, Lambda, alphas, gammas) {
+  let result = { re: 1, im: 0 };
+  
+  for (let n = 0; n < gammas.length; n++) {
+    const gamma = gammas[n];
+    const alpha = alphas[n];
+    
+    // Calculate the factor: [1 - p²/(Λ² + iγ_n)]^α_n
+    const denominator = { re: Lambda * Lambda, im: gamma };
+    const factor = {
+      re: 1 - (pSquared * denominator.re) / (denominator.re**2 + denominator.im**2),
+      im: (pSquared * denominator.im) / (denominator.re**2 + denominator.im**2)
+    };
+    
+    // Calculate power using complex number formula for small alpha
+    // For small alpha: (1 + z)^α ≈ 1 + α*ln(1+z)
+    const magnitude = Math.sqrt(factor.re**2 + factor.im**2);
+    const phase = Math.atan2(factor.im, factor.re);
+    
+    const lnMagnitude = Math.log(magnitude);
+    const term = {
+      re: Math.exp(alpha * lnMagnitude) * Math.cos(alpha * phase),
+      im: Math.exp(alpha * lnMagnitude) * Math.sin(alpha * phase)
+    };
+    
+    // Multiply result by term
+    const newResult = {
+      re: result.re * term.re - result.im * term.im,
+      im: result.re * term.im + result.im * term.re
+    };
+    result = newResult;
+  }
+  
+  return result;
+}
+
+// Standard scalar propagator
+function standardPropagator(pSquared, mass, epsilon = 1e-6) {
+  const denom = (pSquared - mass * mass)**2 + epsilon**2;
+  return { 
+    re: (pSquared - mass * mass) / denom,
+    im: -epsilon / denom
+  };
+}
+
+// Modified propagator with ζ-imprinting
+function zetaModifiedPropagator(pSquared, mass, Lambda, alphas, gammas, epsilon = 1e-6) {
+  const G0 = standardPropagator(pSquared, mass, epsilon);
+  const fZeta = calculateFZeta(pSquared, Lambda, alphas, gammas);
+  
+  return {
+    re: G0.re * fZeta.re - G0.im * fZeta.im,
+    im: G0.re * fZeta.im + G0.im * fZeta.re
+  };
+}
+
+const ZetaPropagatorVisualization = () => {
+  // Riemann zeta zeros (first few)
+  const gammas = [
+    14.134725, 21.022040, 25.010858, 30.424876, 32.935062,
+    37.586178, 40.918719, 43.327073, 48.005151, 49.773832
+  ];
+
+  // Default parameters
+  const [mass, setMass] = useState(0.5);
+  const [lambda, setLambda] = useState(5.0);
+  const [alphaBase, setAlphaBase] = useState(0.05);
+  const [alphaDecay, setAlphaDecay] = useState(0.2);
+  
+  // Generate alpha values with exponential decay
+  const alphas = gammas.map((_, index) => alphaBase * Math.exp(-alphaDecay * index));
+  
+  // Generate data for the chart
+  const generateData = () => {
+    const data = [];
+    
+    // Generate more points near the pole
+    for (let p = 0.1; p <= 1.0; p += 0.025) {
+      const pSquared = p;
+      const G0 = standardPropagator(pSquared, mass);
+      const GZeta = zetaModifiedPropagator(pSquared, mass, lambda, alphas, gammas);
+      
+      data.push({
+        pSquared,
+        standardRe: G0.re,
+        standardIm: G0.im,
+        standardMag: Math.sqrt(G0.re**2 + G0.im**2),
+        zetaRe: GZeta.re,
+        zetaIm: GZeta.im,
+        zetaMag: Math.sqrt(GZeta.re**2 + GZeta.im**2)
+      });
+    }
+    
+    // Add some higher momentum points
+    for (let p = 1.2; p <= 10.0; p += 0.4) {
+      const pSquared = p;
+      const G0 = standardPropagator(pSquared, mass);
+      const GZeta = zetaModifiedPropagator(pSquared, mass, lambda, alphas, gammas);
+      
+      data.push({
+        pSquared,
+        standardRe: G0.re,
+        standardIm: G0.im,
+        standardMag: Math.sqrt(G0.re**2 + G0.im**2),
+        zetaRe: GZeta.re,
+        zetaIm: GZeta.im,
+        zetaMag: Math.sqrt(GZeta.re**2 + GZeta.im**2)
+      });
+    }
+    
+    return data;
+  };
+  
+  const [chartData, setChartData] = useState(generateData());
+  
+  // Recalculate data when parameters change
+  useEffect(() => {
+    setChartData(generateData());
+  }, [mass, lambda, alphaBase, alphaDecay]);
+  
+  // Generate spectral function data
+  const generateSpectralData = () => {
+    const data = [];
+    const epsilon = 1e-3;
+    
+    for (let s = 0.1; s <= 1.0; s += 0.01) {
+      // Standard spectral function (near delta function at s = m²)
+      const rhoStandard = epsilon / ((s - mass*mass)**2 + epsilon**2) / Math.PI;
+      
+      // Modified spectral function
+      const fZeta = calculateFZeta(s, lambda, alphas, gammas);
+      const fZetaMagSquared = fZeta.re**2 + fZeta.im**2;
+      const rhoZeta = rhoStandard * fZetaMagSquared;
+      
+      data.push({
+        s,
+        rhoStandard,
+        rhoZeta
+      });
+    }
+    
+    return data;
+  };
+  
+  const [spectralData, setSpectralData] = useState(generateSpectralData());
+  
+  // Recalculate spectral data when parameters change
+  useEffect(() => {
+    setSpectralData(generateSpectralData());
+  }, [mass, lambda, alphaBase, alphaDecay]);
+  
+  return (
+    <div className="flex flex-col p-4 gap-8">
+      <div className="flex flex-col gap-2">
+        <h2 className="text-xl font-bold">ζ-Imprinted Quantum Field Theory Visualization</h2>
+        <p className="text-gray-700">
+          This visualization shows how the propagator is modified by incorporating 
+          Riemann zeta function zeros using the phase imprint model:
+        </p>
+        <div className="p-2 bg-gray-100 rounded">
+          <p className="font-mono">
+            F_ζ(p²/Λ²) = ∏[1 - p²/(Λ² + iγ_n)]^α_n
+          </p>
+        </div>
+        <p className="text-gray-700">
+          The parameters control the strength (α) and scale (Λ) of the zeta imprinting effect.
+        </p>
+      </div>
+      
+      <div className="flex flex-wrap gap-4">
+        <div className="flex flex-col gap-2">
+          <label className="font-medium">Mass (m)</label>
+          <input 
+            type="range" 
+            min="0.1" 
+            max="2.0" 
+            step="0.1" 
+            value={mass} 
+            onChange={(e) => setMass(parseFloat(e.target.value))} 
+            className="w-48"
+          />
+          <div className="text-sm text-gray-600">{mass}</div>
+        </div>
+        
+        <div className="flex flex-col gap-2">
+          <label className="font-medium">Scale (Λ)</label>
+          <input 
+            type="range" 
+            min="1" 
+            max="20" 
+            step="1" 
+            value={lambda} 
+            onChange={(e) => setLambda(parseFloat(e.target.value))} 
+            className="w-48"
+          />
+          <div className="text-sm text-gray-600">{lambda}</div>
+        </div>
+        
+        <div className="flex flex-col gap-2">
+          <label className="font-medium">α Base Value</label>
+          <input 
+            type="range" 
+            min="0.01" 
+            max="0.2" 
+            step="0.01" 
+            value={alphaBase} 
+            onChange={(e) => setAlphaBase(parseFloat(e.target.value))} 
+            className="w-48"
+          />
+          <div className="text-sm text-gray-600">{alphaBase}</div>
+        </div>
+        
+        <div className="flex flex-col gap-2">
+          <label className="font-medium">α Decay Rate</label>
+          <input 
+            type="range" 
+            min="0.05" 
+            max="0.5" 
+            step="0.05" 
+            value={alphaDecay} 
+            onChange={(e) => setAlphaDecay(parseFloat(e.target.value))} 
+            className="w-48"
+          />
+          <div className="text-sm text-gray-600">{alphaDecay}</div>
+        </div>
+      </div>
+      
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Propagator Magnitude |G(p²)|</h3>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={chartData}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="pSquared"
+                label={{ value: 'p²', position: 'insideBottomRight', offset: -5 }}
+              />
+              <YAxis 
+                label={{ value: '|G(p²)|', angle: -90, position: 'insideLeft' }}
+                scale="log"
+                domain={['auto', 'auto']}
+              />
+              <Tooltip formatter={(value) => value.toFixed(6)} />
+              <Legend />
+              <Line 
+                type="monotone" 
+                dataKey="standardMag" 
+                name="Standard Propagator" 
+                stroke="#8884d8" 
+                dot={false}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="zetaMag" 
+                name="ζ-Modified Propagator" 
+                stroke="#82ca9d" 
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Real Part of Propagator Re[G(p²)]</h3>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={chartData}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="pSquared"
+                label={{ value: 'p²', position: 'insideBottomRight', offset: -5 }}
+              />
+              <YAxis 
+                label={{ value: 'Re[G(p²)]', angle: -90, position: 'insideLeft' }}
+              />
+              <Tooltip formatter={(value) => value.toFixed(6)} />
+              <Legend />
+              <Line 
+                type="monotone" 
+                dataKey="standardRe" 
+                name="Standard Re[G]" 
+                stroke="#8884d8" 
+                dot={false}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="zetaRe" 
+                name="ζ-Modified Re[G]" 
+                stroke="#82ca9d" 
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Imaginary Part of Propagator Im[G(p²)]</h3>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={chartData}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="pSquared"
+                label={{ value: 'p²', position: 'insideBottomRight', offset: -5 }}
+              />
+              <YAxis 
+                label={{ value: 'Im[G(p²)]', angle: -90, position: 'insideLeft' }}
+              />
+              <Tooltip formatter={(value) => value.toFixed(6)} />
+              <Legend />
+              <Line 
+                type="monotone" 
+                dataKey="standardIm" 
+                name="Standard Im[G]" 
+                stroke="#8884d8" 
+                dot={false}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="zetaIm" 
+                name="ζ-Modified Im[G]" 
+                stroke="#82ca9d" 
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      
+      <div>
+        <h3 className="text-lg font-semibold mb-2">Spectral Function ρ(s)</h3>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={spectralData}
+              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="s"
+                label={{ value: 's', position: 'insideBottomRight', offset: -5 }}
+              />
+              <YAxis 
+                label={{ value: 'ρ(s)', angle: -90, position: 'insideLeft' }}
+                scale="log"
+                domain={[0.1, 'auto']}
+              />
+              <Tooltip formatter={(value) => value.toFixed(6)} />
+              <Legend />
+              <Line 
+                type="monotone" 
+                dataKey="rhoStandard" 
+                name="Standard ρ(s)" 
+                stroke="#8884d8" 
+                dot={false}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="rhoZeta" 
+                name="ζ-Modified ρ(s)" 
+                stroke="#82ca9d" 
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ZetaPropagatorVisualization;
