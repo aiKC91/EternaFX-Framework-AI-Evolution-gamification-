@@ -1,0 +1,510 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+
+// Complex number operations
+const Complex = {
+  add: (a, b) => ({ re: a.re + b.re, im: a.im + b.im }),
+  multiply: (a, b) => ({
+    re: a.re * b.re - a.im * b.im,
+    im: a.re * b.im + a.im * b.re
+  }),
+  magnitude: (z) => Math.sqrt(z.re * z.re + z.im * z.im),
+  phase: (z) => Math.atan2(z.im, z.re)
+};
+
+// Riemann Zeta function approximation for s = 1/2 + it
+function riemannZeta(t, terms = 50) {
+  let sum = { re: 0, im: 0 };
+  
+  for (let n = 1; n <= terms; n++) {
+    const logN = Math.log(n);
+    const nPower = Math.exp(-0.5 * logN); // n^(-1/2)
+    const phase = -t * logN; // -it * log(n)
+    
+    const term = {
+      re: nPower * Math.cos(phase),
+      im: nPower * Math.sin(phase)
+    };
+    
+    sum = Complex.add(sum, term);
+  }
+  
+  return sum;
+}
+
+// Modified action calculation
+function calculateAction(field, params) {
+  const { N, m2, lambda, zetaCoupling } = params;
+  let action = 0;
+  
+  for (let i = 0; i < N; i++) {
+    // Kinetic term (discrete derivative)
+    const derivative = field[(i + 1) % N] - field[i];
+    action += 0.5 * derivative * derivative;
+    
+    // Mass term
+    action += 0.5 * m2 * field[i] * field[i];
+    
+    // Interaction term
+    action += lambda * Math.pow(field[i], 4);
+    
+    // Zeta modification term
+    if (zetaCoupling > 0) {
+      const zeta = riemannZeta(field[i]);
+      const zetaMag = Complex.magnitude(zeta);
+      action += zetaCoupling * zetaMag * field[i] * field[i];
+    }
+  }
+  
+  return action;
+}
+
+// Metropolis update step
+function metropolisUpdate(field, params, temperature = 1.0) {
+  const { N } = params;
+  const newField = [...field];
+  let accepted = 0;
+  
+  for (let i = 0; i < N; i++) {
+    const oldValue = newField[i];
+    const step = 0.5 * (Math.random() - 0.5);
+    newField[i] = oldValue + step;
+    
+    // Calculate action change (approximate for efficiency)
+    const deltaAction = calculateLocalActionChange(newField, oldValue, i, params);
+    
+    if (deltaAction < 0 || Math.random() < Math.exp(-deltaAction / temperature)) {
+      accepted++;
+    } else {
+      newField[i] = oldValue;
+    }
+  }
+  
+  return { field: newField, acceptanceRate: accepted / N };
+}
+
+// Local action change for efficiency
+function calculateLocalActionChange(field, oldValue, index, params) {
+  const { N, m2, lambda, zetaCoupling } = params;
+  const newValue = field[index];
+  
+  // Kinetic terms
+  const leftNeighbor = field[(index - 1 + N) % N];
+  const rightNeighbor = field[(index + 1) % N];
+  
+  const oldKinetic = 0.5 * Math.pow(newValue - leftNeighbor, 2) + 0.5 * Math.pow(rightNeighbor - newValue, 2);
+  const newKinetic = 0.5 * Math.pow(oldValue - leftNeighbor, 2) + 0.5 * Math.pow(rightNeighbor - oldValue, 2);
+  
+  // Local terms
+  const oldLocal = 0.5 * m2 * oldValue * oldValue + lambda * Math.pow(oldValue, 4);
+  const newLocal = 0.5 * m2 * newValue * newValue + lambda * Math.pow(newValue, 4);
+  
+  // Zeta term
+  let zetaDelta = 0;
+  if (zetaCoupling > 0) {
+    const oldZeta = Complex.magnitude(riemannZeta(oldValue));
+    const newZeta = Complex.magnitude(riemannZeta(newValue));
+    zetaDelta = zetaCoupling * (newZeta * newValue * newValue - oldZeta * oldValue * oldValue);
+  }
+  
+  return (newKinetic + newLocal + zetaDelta) - (oldKinetic + oldLocal);
+}
+
+// Correlation function calculation
+function calculateCorrelation(field) {
+  const N = field.length;
+  const correlation = [];
+  
+  for (let r = 0; r < N / 2; r++) {
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      sum += field[i] * field[(i + r) % N];
+    }
+    correlation.push({ distance: r, value: sum / N });
+  }
+  
+  return correlation;
+}
+
+// Extract effective mass from correlation function
+function extractMass(correlation) {
+  if (correlation.length < 3) return 1.0;
+  
+  // Fit to exponential decay C(r) ~ exp(-m_eff * r)
+  const ratios = [];
+  for (let i = 1; i < Math.min(correlation.length - 1, 10); i++) {
+    if (correlation[i].value > 0 && correlation[i + 1].value > 0) {
+      const ratio = Math.log(correlation[i].value / correlation[i + 1].value);
+      if (isFinite(ratio) && ratio > 0) {
+        ratios.push(ratio);
+      }
+    }
+  }
+  
+  if (ratios.length === 0) return 1.0;
+  return ratios.reduce((a, b) => a + b, 0) / ratios.length;
+}
+
+export default function ZetaQFTSimulator() {
+  const [params, setParams] = useState({
+    N: 32,
+    m2: 1.0,
+    lambda: 0.1,
+    zetaCoupling: 0.0,
+    temperature: 1.0,
+    steps: 1000
+  });
+  
+  const [isRunning, setIsRunning] = useState(false);
+  const [results, setResults] = useState(null);
+  const [field, setField] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const intervalRef = useRef(null);
+  
+  // Initialize field
+  useEffect(() => {
+    const initialField = Array.from({ length: params.N }, () => 0.1 * (Math.random() - 0.5));
+    setField(initialField);
+  }, [params.N]);
+  
+  const runSimulation = () => {
+    if (!field) return;
+    
+    setIsRunning(true);
+    setProgress(0);
+    
+    let currentField = [...field];
+    const energyHistory = [];
+    const acceptanceHistory = [];
+    
+    let step = 0;
+    
+    intervalRef.current = setInterval(() => {
+      // Perform multiple updates per interval for efficiency
+      for (let i = 0; i < 10 && step < params.steps; i++) {
+        const update = metropolisUpdate(currentField, params, params.temperature);
+        currentField = update.field;
+        
+        if (step % 10 === 0) {
+          const energy = calculateAction(currentField, params);
+          energyHistory.push({ step: step, energy: energy });
+          acceptanceHistory.push({ step: step, rate: update.acceptanceRate });
+        }
+        
+        step++;
+      }
+      
+      setProgress((step / params.steps) * 100);
+      
+      if (step >= params.steps) {
+        clearInterval(intervalRef.current);
+        
+        // Final analysis
+        const correlation = calculateCorrelation(currentField);
+        const effectiveMass = extractMass(correlation);
+        
+        setResults({
+          finalField: currentField,
+          energyHistory,
+          acceptanceHistory,
+          correlation,
+          effectiveMass,
+          finalEnergy: energyHistory[energyHistory.length - 1]?.energy || 0
+        });
+        
+        setField(currentField);
+        setIsRunning(false);
+      }
+    }, 50);
+  };
+  
+  const stopSimulation = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setIsRunning(false);
+  };
+  
+  const resetSimulation = () => {
+    stopSimulation();
+    const initialField = Array.from({ length: params.N }, () => 0.1 * (Math.random() - 0.5));
+    setField(initialField);
+    setResults(null);
+    setProgress(0);
+  };
+  
+  const fieldData = field ? field.map((value, index) => ({ 
+    position: index, 
+    field: value,
+    zeta: params.zetaCoupling > 0 ? Complex.magnitude(riemannZeta(value)) : 0
+  })) : [];
+  
+  return (
+    <div className="p-6 max-w-7xl mx-auto bg-gradient-to-br from-slate-50 to-blue-50 min-h-screen">
+      <div className="mb-8">
+        <h1 className="text-4xl font-bold text-slate-800 mb-2">
+          Riemann Zeta-Modified QFT Simulator
+        </h1>
+        <p className="text-slate-600 text-lg">
+          Interactive simulation of scalar field theory with Riemann Zeta function modifications
+        </p>
+      </div>
+      
+      {/* Parameter Controls */}
+      <div className="bg-white rounded-xl shadow-lg p-6 mb-8">
+        <h2 className="text-2xl font-semibold text-slate-800 mb-4">Simulation Parameters</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Lattice Size (N)</label>
+            <input
+              type="number"
+              value={params.N}
+              onChange={(e) => setParams({...params, N: parseInt(e.target.value) || 32})}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              min="16"
+              max="128"
+              step="16"
+              disabled={isRunning}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Mass² (m²)</label>
+            <input
+              type="number"
+              value={params.m2}
+              onChange={(e) => setParams({...params, m2: parseFloat(e.target.value) || 1.0})}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              min="0"
+              max="5"
+              step="0.1"
+              disabled={isRunning}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Coupling (λ)</label>
+            <input
+              type="number"
+              value={params.lambda}
+              onChange={(e) => setParams({...params, lambda: parseFloat(e.target.value) || 0.1})}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              min="0"
+              max="1"
+              step="0.01"
+              disabled={isRunning}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Zeta Coupling</label>
+            <input
+              type="number"
+              value={params.zetaCoupling}
+              onChange={(e) => setParams({...params, zetaCoupling: parseFloat(e.target.value) || 0.0})}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              min="0"
+              max="0.5"
+              step="0.01"
+              disabled={isRunning}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Temperature</label>
+            <input
+              type="number"
+              value={params.temperature}
+              onChange={(e) => setParams({...params, temperature: parseFloat(e.target.value) || 1.0})}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              min="0.1"
+              max="3"
+              step="0.1"
+              disabled={isRunning}
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Steps</label>
+            <input
+              type="number"
+              value={params.steps}
+              onChange={(e) => setParams({...params, steps: parseInt(e.target.value) || 1000})}
+              className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              min="100"
+              max="5000"
+              step="100"
+              disabled={isRunning}
+            />
+          </div>
+        </div>
+        
+        {/* Control Buttons */}
+        <div className="flex gap-4 mt-6">
+          <button
+            onClick={runSimulation}
+            disabled={isRunning || !field}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            {isRunning ? 'Running...' : 'Start Simulation'}
+          </button>
+          
+          <button
+            onClick={stopSimulation}
+            disabled={!isRunning}
+            className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            Stop
+          </button>
+          
+          <button
+            onClick={resetSimulation}
+            disabled={isRunning}
+            className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            Reset
+          </button>
+        </div>
+        
+        {/* Progress Bar */}
+        {isRunning && (
+          <div className="mt-4">
+            <div className="flex justify-between text-sm text-slate-600 mb-1">
+              <span>Progress</span>
+              <span>{progress.toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Results Display */}
+      {results && (
+        <div className="space-y-8">
+          {/* Summary Statistics */}
+          <div className="bg-white rounded-xl shadow-lg p-6">
+            <h2 className="text-2xl font-semibold text-slate-800 mb-4">Results Summary</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-blue-50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-blue-600">
+                  {results.effectiveMass.toFixed(3)}
+                </div>
+                <div className="text-sm text-slate-600">Effective Mass</div>
+              </div>
+              <div className="bg-green-50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-green-600">
+                  {results.finalEnergy.toFixed(1)}
+                </div>
+                <div className="text-sm text-slate-600">Final Energy</div>
+              </div>
+              <div className="bg-purple-50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-purple-600">
+                  {(results.acceptanceHistory[results.acceptanceHistory.length - 1]?.rate * 100).toFixed(1)}%
+                </div>
+                <div className="text-sm text-slate-600">Acceptance Rate</div>
+              </div>
+              <div className="bg-orange-50 rounded-lg p-4">
+                <div className="text-2xl font-bold text-orange-600">
+                  {Math.sqrt(results.finalField.reduce((sum, x) => sum + x*x, 0) / results.finalField.length).toFixed(3)}
+                </div>
+                <div className="text-sm text-slate-600">Field RMS</div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Field Configuration and Zeta Values */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="text-xl font-semibold text-slate-800 mb-4">Field Configuration</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={fieldData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="position" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="field" stroke="#2563eb" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            
+            {params.zetaCoupling > 0 && (
+              <div className="bg-white rounded-xl shadow-lg p-6">
+                <h3 className="text-xl font-semibold text-slate-800 mb-4">Zeta Function Values</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={fieldData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="position" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="zeta" stroke="#dc2626" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+          
+          {/* Energy Evolution and Correlation Function */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="text-xl font-semibold text-slate-800 mb-4">Energy Evolution</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={results.energyHistory}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="step" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="energy" stroke="#059669" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="text-xl font-semibold text-slate-800 mb-4">Correlation Function</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={results.correlation.slice(0, 15)}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="distance" />
+                  <YAxis scale="log" domain={['dataMin', 'dataMax']} />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2} dot={true} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Theory Description */}
+      <div className="bg-white rounded-xl shadow-lg p-6 mt-8">
+        <h2 className="text-2xl font-semibold text-slate-800 mb-4">Theoretical Framework</h2>
+        <div className="prose prose-slate max-w-none">
+          <p className="text-slate-700 mb-4">
+            This simulator implements a scalar field theory with a modified action that includes contributions from the Riemann Zeta function:
+          </p>
+          <div className="bg-slate-50 rounded-lg p-4 font-mono text-sm mb-4">
+            S = S_standard + ζ_coupling × ∫ |ζ(1/2 + iφ(x))| φ(x)² dx
+          </div>
+          <p className="text-slate-700 mb-4">
+            The standard action includes kinetic (∇φ)²/2, mass m²φ²/2, and interaction λφ⁴ terms. 
+            The Zeta modification couples the field to the magnitude of the Riemann Zeta function evaluated at s = 1/2 + iφ(x).
+          </p>
+          <p className="text-slate-700">
+            Key observables include the effective mass extracted from the correlation function's exponential decay, 
+            which may shift due to the number-theoretic structure introduced by the Zeta function. 
+            This provides a computational framework for exploring the intersection of quantum field theory and number theory.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
