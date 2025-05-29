@@ -1,0 +1,820 @@
+"""
+🔷 EternaFX Framework — v1.4.0
+Advanced research platform integrating stability analysis, adaptive optimization,
+machine learning prediction, and advanced mathematical metrics for experimental mathematics.
+"""
+import numpy as np
+import random
+import math
+import sqlite3
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any, List, Tuple, Optional, Callable
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from IPython.display import HTML
+import seaborn as sns
+from scipy.optimize import minimize
+from scipy.signal import welch
+from sklearn.metrics import mean_squared_error
+import warnings
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
+logger = logging.getLogger('EternaFX')
+
+# =============================================================================
+# 1. Enhanced Modular Discretization Framework (MDF)
+# =============================================================================
+class ModularDiscretizationFramework:
+    """Hybrid high-order discrete difference + series-based dissipation"""
+    def __init__(self, delta_x: float, M: int=4, s: float=1.5, alpha: float=0.01, N_terms: int=100):
+        self.delta_x = delta_x
+        self.M = M
+        self.s = s
+        self.alpha = alpha
+        self.N_terms = N_terms
+        self.w = [1.0/(2**m) for m in range(1, M+1)]
+        self.a_n = self._generate_series_coefficients(N_terms)
+        self.convergence_history = []
+
+    def _generate_series_coefficients(self, N: int) -> List[float]:
+        """Generate coefficients with convergence properties"""
+        return [1.0/(n**1.8) * (0.9 if n % 2 == 0 else 1.1) for n in range(1, N+1)]
+    
+    def symbolic_representation(self) -> str:
+        """Generate symbolic representation of the operator"""
+        terms = []
+        for m in range(1, self.M+1):
+            binom_terms = []
+            for k in range(m+1):
+                sign = "-" if k % 2 == 1 else "+"
+                binom_terms.append(f"{sign} binom({m},{k})·u_{i+{m-k}}")
+            terms.append(f"w_{m} * [{' '.join(binom_terms)}] / (Δx)^{m}")
+        
+        series_terms = " + ".join([f"a_{n}/({n+1})^{self.s}" for n in range(self.N_terms)])
+        series_part = f"α * [{series_terms}] * u_i"
+        
+        return " + ".join(terms) + " + " + series_part
+
+    def discrete_difference(self, u: np.ndarray, m: int) -> np.ndarray:
+        N = len(u)
+        Dm = np.zeros_like(u)
+        for i in range(N):
+            for k in range(m+1):
+                idx = (i + m - k) % N
+                Dm[i] += ((-1)**k) * math.comb(m, k) * u[idx]
+        return Dm / (self.delta_x**m)
+
+    def series_dissipation(self, u: np.ndarray) -> np.ndarray:
+        coef = sum(self.a_n[n]/((n+1)**self.s) for n in range(self.N_terms))
+        return self.alpha * coef * u
+
+    def apply_operator(self, u: np.ndarray) -> np.ndarray:
+        D_u = np.zeros_like(u)
+        for m in range(1, self.M+1):
+            D_u += self.w[m-1] * self.discrete_difference(u, m)
+        D_u += self.series_dissipation(u)
+        return D_u
+
+    def update_weights(self, grad: List[float], lr: float=0.01):
+        for i in range(self.M):
+            self.w[i] = max(1e-3, self.w[i] - lr*grad[i])
+        self.convergence_history.append(self.w.copy())
+
+    def visualize_convergence(self):
+        if not self.convergence_history:
+            return
+        
+        plt.figure(figsize=(10, 6))
+        history = np.array(self.convergence_history)
+        for i in range(history.shape[1]):
+            plt.plot(history[:, i], label=f'Weight {i+1}')
+        plt.title('MDF Weight Convergence History')
+        plt.xlabel('Optimization Step')
+        plt.ylabel('Weight Value')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+# =============================================================================
+# 2. Advanced Stability Analysis
+# =============================================================================
+class StabilityAnalyzer:
+    """Advanced stability analysis using Lyapunov exponents and spectral radius"""
+    
+    def __init__(self):
+        self.lyapunov_history = []
+        self.spectral_radius_history = []
+    
+    def compute_lyapunov_exponent(self, trajectory: np.ndarray, dt: float = 0.001) -> float:
+        """Estimate largest Lyapunov exponent from trajectory"""
+        if len(trajectory) < 10:
+            return 0.0
+        
+        # Compute local divergence rates
+        divergence_rates = []
+        for i in range(1, len(trajectory)-1):
+            # Simple finite difference approximation
+            local_rate = np.abs(trajectory[i+1] - trajectory[i]) / dt
+            if local_rate > 1e-12:
+                divergence_rates.append(np.log(local_rate))
+        
+        return np.mean(divergence_rates) if divergence_rates else 0.0
+    
+    def compute_spectral_radius(self, jacobian: np.ndarray) -> float:
+        """Compute spectral radius of Jacobian matrix"""
+        try:
+            eigenvals = np.linalg.eigvals(jacobian)
+            return np.max(np.abs(eigenvals))
+        except:
+            return float('inf')
+    
+    def analyze_trajectory_stability(self, trajectory: List[np.ndarray]) -> Dict[str, float]:
+        """Comprehensive stability analysis of a trajectory"""
+        if not trajectory:
+            return {}
+        
+        # Convert to array format
+        traj_array = np.array(trajectory)
+        
+        # Lyapunov exponent
+        lyap_exp = self.compute_lyapunov_exponent(traj_array)
+        self.lyapunov_history.append(lyap_exp)
+        
+        # Trajectory statistics
+        energy_trend = [np.sum(state**2) for state in trajectory]
+        energy_growth_rate = np.polyfit(range(len(energy_trend)), np.log(np.array(energy_trend) + 1e-12), 1)[0]
+        
+        # Frequency analysis
+        if len(trajectory) > 10:
+            # Power spectral density
+            freqs, psd = welch(energy_trend, nperseg=min(len(energy_trend)//4, 256))
+            dominant_freq = freqs[np.argmax(psd)] if len(psd) > 0 else 0.0
+        else:
+            dominant_freq = 0.0
+        
+        return {
+            'lyapunov_exponent': lyap_exp,
+            'energy_growth_rate': energy_growth_rate,
+            'dominant_frequency': dominant_freq,
+            'max_amplitude': np.max([np.max(np.abs(state)) for state in trajectory]),
+            'stability_score': 1.0 / (1.0 + abs(lyap_exp)) if lyap_exp != float('inf') else 0.0
+        }
+
+# =============================================================================
+# 3. Adaptive Parameter Optimization
+# =============================================================================
+class AdaptiveParameterOptimizer:
+    """Optimize MDF parameters based on stability and accuracy metrics"""
+    
+    def __init__(self, target_metrics: Dict[str, float]):
+        self.target_metrics = target_metrics
+        self.optimization_history = []
+    
+    def objective_function(self, params: np.ndarray, mdf: ModularDiscretizationFramework, 
+                          test_function: Callable) -> float:
+        """Objective function for parameter optimization"""
+        try:
+            # Update MDF parameters
+            mdf.alpha = max(1e-6, params[0])
+            mdf.s = max(1.0, params[1])
+            if len(params) > 2:
+                mdf.w = [max(1e-3, w) for w in params[2:2+len(mdf.w)]]
+            
+            # Run test simulation
+            test_result = test_function(mdf)
+            
+            # Compute objective (minimize deviation from targets)
+            objective = 0.0
+            for key, target in self.target_metrics.items():
+                if key in test_result:
+                    objective += (test_result[key] - target)**2
+            
+            return objective
+        except:
+            return float('inf')
+    
+    def optimize_mdf_parameters(self, mdf: ModularDiscretizationFramework, 
+                               test_function: Callable, 
+                               max_iterations: int = 50) -> Dict[str, float]:
+        """Optimize MDF parameters using scipy.optimize"""
+        
+        # Initial parameter vector
+        initial_params = [mdf.alpha, mdf.s] + mdf.w
+        
+        # Bounds for parameters
+        bounds = [(1e-6, 1.0), (1.0, 3.0)] + [(1e-3, 2.0) for _ in mdf.w]
+        
+        # Optimization
+        try:
+            result = minimize(
+                self.objective_function,
+                initial_params,
+                args=(mdf, test_function),
+                bounds=bounds,
+                method='L-BFGS-B',
+                options={'maxiter': max_iterations}
+            )
+            
+            # Update MDF with optimized parameters
+            if result.success:
+                mdf.alpha = result.x[0]
+                mdf.s = result.x[1]
+                mdf.w = list(result.x[2:2+len(mdf.w)])
+            
+            self.optimization_history.append({
+                'success': result.success,
+                'final_objective': result.fun,
+                'parameters': result.x.tolist(),
+                'iterations': result.nit
+            })
+            
+            return {
+                'optimization_success': result.success,
+                'final_objective': result.fun,
+                'optimized_alpha': result.x[0],
+                'optimized_s': result.x[1],
+                'optimized_weights': result.x[2:2+len(mdf.w)].tolist()
+            }
+        except Exception as e:
+            print(f"Optimization failed: {e}")
+            return {'optimization_success': False}
+
+# =============================================================================
+# 4. Machine Learning Stability Prediction
+# =============================================================================
+class MLStabilityPredictor:
+    """Machine learning model to predict simulation stability"""
+    
+    def __init__(self):
+        self.training_data = []
+        self.model_trained = False
+        self.feature_names = [
+            'viscosity', 'max_velocity', 'energy_dissipation', 
+            'smoothness_metric', 'gradient_norm', 'total_variation'
+        ]
+    
+    def extract_features(self, metrics: Dict[str, float]) -> np.ndarray:
+        """Extract feature vector from simulation metrics"""
+        features = []
+        for name in self.feature_names:
+            features.append(metrics.get(name, 0.0))
+        return np.array(features)
+    
+    def add_training_sample(self, metrics: Dict[str, float], is_stable: bool):
+        """Add a training sample to the dataset"""
+        features = self.extract_features(metrics)
+        self.training_data.append((features, int(is_stable)))
+    
+    def train_simple_model(self):
+        """Train a simple threshold-based stability predictor"""
+        if len(self.training_data) < 5:
+            print("Insufficient training data")
+            return
+        
+        # Extract features and labels
+        X = np.array([sample[0] for sample in self.training_data])
+        y = np.array([sample[1] for sample in self.training_data])
+        
+        # Simple linear threshold model
+        self.stability_thresholds = {}
+        for i, feature_name in enumerate(self.feature_names):
+            stable_values = X[y == 1, i]
+            unstable_values = X[y == 0, i]
+            
+            if len(stable_values) > 0 and len(unstable_values) > 0:
+                # Use median values as threshold
+                threshold = (np.median(stable_values) + np.median(unstable_values)) / 2
+                self.stability_thresholds[feature_name] = threshold
+        
+        self.model_trained = True
+        print(f"Trained stability predictor with {len(self.training_data)} samples")
+    
+    def predict_stability(self, metrics: Dict[str, float]) -> Tuple[bool, float]:
+        """Predict stability and return confidence score"""
+        if not self.model_trained:
+            return True, 0.5  # Default to stable with low confidence
+        
+        features = self.extract_features(metrics)
+        stability_votes = 0
+        total_votes = 0
+        
+        for i, feature_name in enumerate(self.feature_names):
+            if feature_name in self.stability_thresholds:
+                threshold = self.stability_thresholds[feature_name]
+                if features[i] <= threshold:
+                    stability_votes += 1
+                total_votes += 1
+        
+        if total_votes == 0:
+            return True, 0.5
+        
+        confidence = stability_votes / total_votes
+        is_stable = confidence > 0.5
+        
+        return is_stable, confidence
+
+# =============================================================================
+# 5. Advanced Mathematical Metrics
+# =============================================================================
+class AdvancedMetrics:
+    """Compute advanced mathematical metrics for solution quality"""
+    
+    @staticmethod
+    def compute_entropy(u: np.ndarray) -> float:
+        """Compute entropy of the solution field"""
+        # Normalize to probability distribution
+        u_pos = np.abs(u) + 1e-12
+        p = u_pos / np.sum(u_pos)
+        entropy = -np.sum(p * np.log(p + 1e-12))
+        return entropy
+    
+    @staticmethod
+    def compute_fractal_dimension(u: np.ndarray) -> float:
+        """Estimate fractal dimension using box-counting method"""
+        if len(u) < 8:
+            return 1.0
+        
+        # Simple 1D box-counting
+        scales = [2**i for i in range(1, int(np.log2(len(u)//4)) + 1)]
+        counts = []
+        
+        for scale in scales:
+            boxes = len(u) // scale
+            count = 0
+            for i in range(boxes):
+                box_slice = u[i*scale:(i+1)*scale]
+                if np.var(box_slice) > 1e-6:  # Non-trivial variation
+                    count += 1
+            counts.append(count)
+        
+        if len(counts) > 1:
+            # Linear fit of log(count) vs log(1/scale)
+            log_scales = np.log([1/s for s in scales])
+            log_counts = np.log([max(c, 1) for c in counts])
+            fractal_dim = np.polyfit(log_scales, log_counts, 1)[0]
+            return max(1.0, min(2.0, fractal_dim))
+        
+        return 1.0
+    
+    @staticmethod
+    def compute_holder_exponent(u: np.ndarray) -> float:
+        """Estimate Hölder exponent for regularity analysis"""
+        if len(u) < 4:
+            return 1.0
+        
+        # Compute differences at multiple scales
+        scales = [1, 2, 4]
+        holder_estimates = []
+        
+        for h in scales:
+            if len(u) > 2*h:
+                diff = np.abs(u[h:] - u[:-h])
+                avg_diff = np.mean(diff)
+                if avg_diff > 1e-12:
+                    # Hölder estimate: |f(x+h) - f(x)| ≤ C * h^α
+                    alpha_est = np.log(avg_diff) / np.log(h)
+                    holder_estimates.append(min(1.0, max(0.1, alpha_est)))
+        
+        return np.mean(holder_estimates) if holder_estimates else 1.0
+
+# =============================================================================
+# 6. Enhanced Millennium Problems Engine
+# =============================================================================
+class MillenniumProblem:
+    def __init__(self, name: str, desc: str):
+        self.name, self.description = name, desc
+        self.progress = 0.0
+        self.simulation_metrics = []
+        self.research_db = "eternafx_research.db"
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.research_db) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS research_runs (
+                    id INTEGER PRIMARY KEY,
+                    timestamp TEXT,
+                    problem TEXT,
+                    parameters TEXT,
+                    metrics TEXT,
+                    stability TEXT,
+                    notes TEXT
+                )
+            ''')
+
+    def log_run(self, parameters: Dict, metrics: Dict, stability: str, notes: str = ""):
+        with sqlite3.connect(self.research_db) as conn:
+            conn.execute('''
+                INSERT INTO research_runs (timestamp, problem, parameters, metrics, stability, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                datetime.now().isoformat(),
+                self.name,
+                json.dumps(parameters),
+                json.dumps(metrics),
+                stability,
+                notes
+            ))
+
+    @abstractmethod
+    def run_sim(self, **kwargs) -> Dict[str,Any]:
+        pass
+
+class NavierStokes(MillenniumProblem):
+    def __init__(self):
+        super().__init__("Navier-Stokes", "Existence & smoothness of solutions.")
+        self.mdf = None
+        self.history: List[np.ndarray] = []
+        self.metric_history: List[Dict] = []
+        self.fourier_history: List[Tuple[np.ndarray, np.ndarray]] = []
+        self.stability_analyzer = StabilityAnalyzer()
+        self.ml_predictor = MLStabilityPredictor()
+
+    def run_sim(self, time_steps: int=100, viscosity: float=0.01,
+                use_mdf: bool=False, store_history: bool=False,
+                store_metrics: bool=True, store_fourier: bool=False,
+                auto_optimize: bool=False) -> Dict[str,Any]:
+        Nx, dx, dt = 100, 1.0/100, 1e-3
+        u = np.zeros(Nx)
+        u[Nx//2-5:Nx//2+5] = 1.0
+        
+        if store_history: self.history=[u.copy()]
+        if store_metrics: self.metric_history=[self._compute_metrics(u, viscosity)]
+        if store_fourier: self.fourier_history=[self.compute_fourier_spectrum(u)]
+        
+        if use_mdf and self.mdf is None:
+            self.mdf = ModularDiscretizationFramework(dx, M=4, s=1.8, alpha=0.02)
+        
+        # Auto-optimize MDF parameters if requested
+        if auto_optimize and use_mdf and self.mdf:
+            optimizer = AdaptiveParameterOptimizer({
+                'energy_dissipation': 1.0,
+                'smoothness_metric': 0.1,
+                'max_velocity': 2.0
+            })
+            opt_result = optimizer.optimize_mdf_parameters(
+                self.mdf,
+                lambda mdf: self._run_test_sim(mdf, viscosity),
+                max_iterations=20
+            )
+            if opt_result['optimization_success']:
+                logger.info("MDF parameters optimized successfully")
+        
+        stability_issues = 0
+        stability_status = "Stable"
+        
+        for step in range(time_steps):
+            conv = -u*(np.roll(u,-1)-np.roll(u,1))/(2*dx)
+            if use_mdf:
+                diff = viscosity*self.mdf.apply_operator(u)
+            else:
+                diff = viscosity*(np.roll(u,1)-2*u+np.roll(u,-1))/(dx**2)
+            
+            u_new = u + dt*(conv+diff)
+            u_new = np.clip(u_new, 0, None)
+            
+            # Check stability using ML predictor if trained
+            if self.ml_predictor.model_trained:
+                current_metrics = self._compute_metrics(u_new, viscosity)
+                is_stable, confidence = self.ml_predictor.predict_stability(current_metrics)
+                if not is_stable and confidence > 0.7:
+                    stability_issues += 1
+                    stability_status = f"Unstable (ML confidence: {confidence:.2f})"
+                    # Apply stabilization
+                    u_new = 0.5 * (u + u_new)
+            
+            u = u_new
+            
+            if store_history: self.history.append(u.copy())
+            if store_metrics: 
+                current_metrics = self._compute_metrics(u, viscosity)
+                self.metric_history.append(current_metrics)
+                # Add training sample for ML predictor
+                self.ml_predictor.add_training_sample(current_metrics, stability_issues == 0)
+            if store_fourier: self.fourier_history.append(self.compute_fourier_spectrum(u))
+        
+        # Train ML predictor if we have enough data
+        if len(self.ml_predictor.training_data) >= 10:
+            self.ml_predictor.train_simple_model()
+        
+        # Advanced stability analysis
+        stability_analysis = self.stability_analyzer.analyze_trajectory_stability(self.history)
+        
+        final_metrics = self._compute_metrics(u, viscosity)
+        final_metrics.update({
+            'used_mdf': use_mdf,
+            'stability_issues': stability_issues,
+            'simulation_steps': time_steps,
+            'viscosity': viscosity,
+            'stability_status': stability_status
+        })
+        final_metrics.update(stability_analysis)
+        
+        # Advanced mathematical metrics
+        if self.history:
+            final_metrics.update({
+                'entropy': AdvancedMetrics.compute_entropy(u),
+                'fractal_dimension': AdvancedMetrics.compute_fractal_dimension(u),
+                'holder_exponent': AdvancedMetrics.compute_holder_exponent(u)
+            })
+        
+        # Log to research database
+        self.log_run(
+            parameters={'time_steps': time_steps, 'viscosity': viscosity, 'use_mdf': use_mdf},
+            metrics=final_metrics,
+            stability=stability_status,
+            notes=f"{'MDF' if use_mdf else 'Standard'} simulation"
+        )
+        
+        return final_metrics
+
+    def _run_test_sim(self, mdf: ModularDiscretizationFramework, viscosity: float) -> Dict[str, float]:
+        """Run a short test simulation for optimization"""
+        Nx, dx, dt = 50, 1.0/50, 1e-3
+        u = np.zeros(Nx)
+        u[Nx//2-5:Nx//2+5] = 1.0
+        
+        for _ in range(20):  # Short simulation for optimization
+            conv = -u*(np.roll(u,-1)-np.roll(u,1))/(2*dx)
+            diff = viscosity * mdf.apply_operator(u)
+            u = u + dt*(conv+diff)
+            u = np.clip(u, 0, None)
+        
+        return self._compute_metrics(u, viscosity)
+
+    def _compute_metrics(self, u: np.ndarray, viscosity: float) -> Dict[str, float]:
+        grad = np.diff(u)
+        return {
+            'energy_dissipation': viscosity * np.sum(u**2),
+            'smoothness_metric': np.std(grad),
+            'total_variation': np.sum(np.abs(grad)),
+            'max_velocity': np.max(u),
+            'mass_conservation': np.sum(u),
+            'gradient_norm': np.linalg.norm(grad, 2)
+        }
+    
+    def compute_fourier_spectrum(self, u: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute Fourier energy spectrum"""
+        fft_vals = np.fft.rfft(u)
+        spectrum = np.abs(fft_vals)**2
+        freqs = np.fft.rfftfreq(len(u))
+        return freqs, spectrum
+
+# =============================================================================
+# 7. Enhanced Visualization & Analysis
+# =============================================================================
+def plot_velocity_field(history: List[np.ndarray], title: str = "Velocity Evolution Over Time"):
+    """Plot the time evolution of velocity field as a heatmap"""
+    if not history:
+        logger.warning("Empty history provided to plot_velocity_field.")
+        return
+
+    velocity_matrix = np.array(history)
+    plt.figure(figsize=(12, 6))
+    sns.heatmap(velocity_matrix.T, cmap="viridis", cbar_kws={'label': 'Velocity'})
+    plt.title(title)
+    plt.xlabel("Time Step")
+    plt.ylabel("Spatial Index")
+    plt.tight_layout()
+    plt.show()
+
+def plot_fourier_spectrum(fourier_history: List[Tuple[np.ndarray, np.ndarray]], 
+                         step_interval: int = 5, 
+                         title: str = "Energy Spectrum Evolution"):
+    """Plot the evolution of Fourier energy spectrum"""
+    if not fourier_history:
+        return
+    
+    plt.figure(figsize=(12, 8))
+    cmap = plt.cm.viridis
+    
+    for i, (freqs, spectrum) in enumerate(fourier_history):
+        if i % step_interval == 0 or i == len(fourier_history)-1:
+            # Plot only up to Nyquist frequency
+            valid = freqs > 0
+            plt.loglog(freqs[valid], spectrum[valid], 
+                      color=cmap(i/len(fourier_history)), 
+                      alpha=0.6,
+                      label=f"t={i}" if i in [0, len(fourier_history)-1] else None)
+    
+    plt.title(title, fontsize=16)
+    plt.xlabel("Wavenumber (log scale)", fontsize=14)
+    plt.ylabel("Energy Spectrum (log scale)", fontsize=14)
+    plt.grid(True, which="both", ls="--", alpha=0.6)
+    plt.legend()
+    plt.colorbar(plt.cm.ScalarMappable(cmap=cmap), label='Time progression')
+    plt.show()
+
+def animate_velocity_gif(history: List[np.ndarray], filename: str, fps: int = 20):
+    """Create and save a GIF animation of velocity evolution"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.set_xlim(0, len(history[0]))
+    ax.set_ylim(0, max(1.1, np.max(history)*1.1))
+    ax.set_title("Fluid Velocity Evolution", fontsize=14)
+    ax.set_xlabel("Position", fontsize=12)
+    ax.set_ylabel("Velocity", fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.5)
+    
+    line, = ax.plot([], [], 'b-', linewidth=2)
+    time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12)
+    
+    def init():
+        line.set_data([], [])
+        time_text.set_text('Time = 0')
+        return line, time_text
+    
+    def update(frame):
+        line.set_data(np.arange(len(history[frame])), history[frame])
+        time_text.set_text(f'Time = {frame}')
+        return line, time_text
+    
+    anim = FuncAnimation(fig, update, frames=len(history), 
+                         init_func=init, blit=True, interval=50)
+    
+    # Save as GIF
+    anim.save(filename, writer=PillowWriter(fps=fps))
+    plt.close()
+    logger.info(f"Animation saved as {filename}")
+
+def plot_research_history(problem_name: str = "Navier-Stokes"):
+    """Visualize research progress from database"""
+    conn = sqlite3.connect("eternafx_research.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT timestamp, metrics FROM research_runs WHERE problem=?", (problem_name,))
+    data = cursor.fetchall()
+    conn.close()
+    
+    if not data:
+        logger.warning("No research data found")
+        return
+    
+    # Parse metrics
+    timestamps = [datetime.fromisoformat(row[0]) for row in data]
+    metrics = [json.loads(row[1]) for row in data]
+    
+    # Prepare data for plotting
+    energy = [m['energy_dissipation'] for m in metrics]
+    smoothness = [m['smoothness_metric'] for m in metrics]
+    stability = [1 if "Stable" in m.get('stability_status', '') else 0 for m in metrics]
+    lyapunov = [m.get('lyapunov_exponent', 0) for m in metrics]
+    
+    # Create figure
+    plt.figure(figsize=(14, 12))
+    
+    # Energy dissipation over time
+    plt.subplot(4, 1, 1)
+    plt.plot(timestamps, energy, 'o-')
+    plt.title('Energy Dissipation Evolution', fontsize=16)
+    plt.ylabel('Energy', fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Solution smoothness
+    plt.subplot(4, 1, 2)
+    plt.plot(timestamps, smoothness, 'o-', color='green')
+    plt.title('Solution Smoothness Evolution', fontsize=16)
+    plt.ylabel('Smoothness Metric', fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Lyapunov exponent
+    plt.subplot(4, 1, 3)
+    plt.plot(timestamps, lyapunov, 'o-', color='purple')
+    plt.title('Lyapunov Exponent Evolution', fontsize=16)
+    plt.ylabel('Lyapunov Exponent', fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Stability status
+    plt.subplot(4, 1, 4)
+    plt.step(timestamps, stability, where='post', color='red')
+    plt.title('Stability Status', fontsize=16)
+    plt.ylabel('Stable (1) / Unstable (0)', fontsize=14)
+    plt.yticks([0, 1], ['Unstable', 'Stable'])
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+
+# =============================================================================
+# 8. Benchmarking and Comparison
+# =============================================================================
+def benchmark_methods(problem: MillenniumProblem, configs: List[Dict]) -> Dict[str, List[float]]:
+    """Benchmark different simulation configurations"""
+    results = {
+        'config': [],
+        'stability_score': [],
+        'accuracy_score': [],
+        'computational_cost': []
+    }
+    
+    for i, config in enumerate(configs):
+        logger.info(f"Running benchmark {i+1}/{len(configs)}")
+        
+        import time
+        start_time = time.time()
+        
+        # Run simulation with this configuration
+        sim_results = problem.run_sim(**config)
+        
+        computation_time = time.time() - start_time
+        
+        # Extract metrics
+        stability_score = sim_results.get('stability_score', 0.0)
+        accuracy_score = 1.0 / (1.0 + sim_results.get('smoothness_metric', 1.0))
+        
+        results['config'].append(f"Config_{i}")
+        results['stability_score'].append(stability_score)
+        results['accuracy_score'].append(accuracy_score)
+        results['computational_cost'].append(computation_time)
+    
+    return results
+
+def plot_benchmark_results(results: Dict[str, List[float]]):
+    """Visualize benchmark results"""
+    configs = results['config']
+    stability = results['stability_score']
+    accuracy = results['accuracy_score']
+    cost = results['computational_cost']
+    
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    
+    # Stability and Accuracy
+    index = np.arange(len(configs))
+    bar_width = 0.35
+    
+    ax1.bar(index, stability, bar_width, label='Stability Score', color='skyblue')
+    ax1.bar(index + bar_width, accuracy, bar_width, label='Accuracy Score', color='salmon')
+    ax1.set_xlabel('Configuration')
+    ax1.set_ylabel('Scores')
+    ax1.set_title('Simulation Benchmark Results')
+    ax1.set_xticks(index + bar_width / 2)
+    ax1.set_xticklabels(configs)
+    ax1.legend(loc='upper left')
+    
+    # Computational Cost
+    ax2 = ax1.twinx()
+    ax2.plot(index + bar_width / 2, cost, 'g-o', linewidth=2, label='Computation Time (s)')
+    ax2.set_ylabel('Computation Time (s)', color='g')
+    ax2.tick_params(axis='y', labelcolor='g')
+    ax2.legend(loc='upper right')
+    
+    plt.tight_layout()
+    plt.show()
+
+# =============================================================================
+# 9. Main Research Interface
+# =============================================================================
+def run_comprehensive_research():
+    """Run full research workflow with all enhancements"""
+    logger.info("Starting comprehensive research workflow...")
+    
+    # Initialize problem
+    ns = NavierStokes()
+    
+    # Run simulations with different configurations
+    configs = [
+        {'time_steps': 100, 'viscosity': 0.01, 'use_mdf': False},
+        {'time_steps': 100, 'viscosity': 0.01, 'use_mdf': True},
+        {'time_steps': 100, 'viscosity': 0.01, 'use_mdf': True, 'auto_optimize': True}
+    ]
+    
+    # Run benchmarks
+    benchmark_results = benchmark_methods(ns, configs)
+    plot_benchmark_results(benchmark_results)
+    
+    # Run detailed simulation with all diagnostics
+    logger.info("Running detailed diagnostic simulation...")
+    detailed_results = ns.run_sim(
+        time_steps=200,
+        viscosity=0.005,
+        use_mdf=True,
+        store_history=True,
+        store_metrics=True,
+        store_fourier=True,
+        auto_optimize=True
+    )
+    
+    # Generate visualizations
+    if ns.history:
+        plot_velocity_field(ns.history, "MDF-Enhanced Simulation")
+        animate_velocity_gif(ns.history, "mdf_simulation.gif")
+    
+    if ns.fourier_history:
+        plot_fourier_spectrum(ns.fourier_history, title="Energy Spectrum Evolution")
+    
+    # Show research history
+    plot_research_history()
+    
+    # Display MDF symbolic representation
+    if ns.mdf:
+        logger.info("MDF Symbolic Representation:")
+        print(ns.mdf.symbolic_representation())
+    
+    logger.info("Research workflow complete")
+
+# =============================================================================
+# 10. Execution
+# =============================================================================
+if __name__ == '__main__':
+    run_comprehensive_research()
