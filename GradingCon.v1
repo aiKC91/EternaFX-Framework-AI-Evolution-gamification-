@@ -1,0 +1,499 @@
+# EternaFX Consciousness Testing Suite
+
+A comprehensive, scientifically-grounded framework for evaluating consciousness in artificial intelligence systems based on Integrated Information Theory (IIT) and neuroscientific principles.
+
+## 🧠 Scientific Foundation
+
+The suite implements multiple consciousness evaluation metrics:
+
+- **Integrated Information Theory (IIT)**: Φ (Phi) computation for information integration
+- **Self-concept Persistence**: Identity coherence across contexts
+- **Cross-domain Consistency**: Performance stability across different domains
+- **Temporal Coherence**: Consciousness stability over time
+- **Insight Emergence**: Correlation between understanding and consciousness
+
+## 📁 Project Structure
+
+```
+eternafx/
+├── __init__.py                 # Main package interface
+├── model_interface.py          # ConsciousnessTestable protocol
+├── test_registry.py           # Test discovery and execution
+├── baselines/
+│   ├── __init__.py
+│   ├── mock_gpt4_model.py     # Baseline GPT-4 simulation
+│   └── simple_model.py        # Basic model implementation
+├── tests/
+│   ├── __init__.py
+│   ├── insight_correlation.py  # Core consciousness test
+│   ├── identity_persistence.py # Self-concept evaluation
+│   ├── cross_domain.py        # Domain transfer test
+│   └── temporal_coherence.py  # Time-based coherence
+├── exporters/
+│   ├── __init__.py
+│   ├── json_exporter.py       # JSON results export
+│   └── csv_exporter.py        # CSV summary export
+├── cli/
+│   ├── __init__.py
+│   └── main.py               # Command-line interface
+└── dashboard/
+    ├── app.py                # Streamlit dashboard
+    └── components/
+        ├── overview.py       # Summary metrics
+        └── test_details.py   # Detailed results
+```
+
+## 🚀 Installation
+
+```bash
+# Basic installation
+pip install eterna-consciousness-suite
+
+# With dashboard support
+pip install eterna-consciousness-suite[dashboard]
+
+# Development installation
+git clone https://github.com/eternafx/consciousness-suite
+cd consciousness-suite
+pip install -e .[dev]
+```
+
+## 🎯 Quick Start
+
+### 1. Implement Your Model
+
+```python
+from eternafx import ConsciousnessTestable, ModelCapabilities
+import numpy as np
+
+class MyAIModel(ConsciousnessTestable):
+    @property
+    def model_info(self):
+        return {
+            "name": "MyAI",
+            "version": "1.0",
+            "description": "Custom AI model for consciousness testing"
+        }
+    
+    @property
+    def capabilities(self):
+        return ModelCapabilities(
+            supports_psi_computation=True,
+            supports_concept_embeddings=True,
+            supports_symbolic_reasoning=False
+        )
+    
+    def compute_psi(self, state_vector):
+        """Compute Integrated Information (Φ)"""
+        # Your IIT implementation here
+        return np.random.uniform(0.7, 0.95)
+    
+    def get_concept_embedding(self, concept):
+        """Get semantic embedding for concept"""
+        # Your embedding implementation here
+        return np.random.rand(512)
+```
+
+### 2. Run Tests
+
+```python
+from eternafx import run_all_tests
+
+# Initialize your model
+model = MyAIModel()
+
+# Run complete consciousness evaluation
+results = run_all_tests(model)
+
+# View summary
+print(f"Consciousness Score: {results['summary']['overall_score']:.3f}")
+print(f"Pass Rate: {results['summary']['pass_rate']:.1%}")
+```
+
+### 3. Export Results
+
+```python
+from eternafx.exporters import export_to_json, export_to_csv
+from pathlib import Path
+
+# Export detailed results
+export_to_json(results, Path("consciousness_results.json"))
+
+# Export summary
+export_to_csv(results, Path("consciousness_summary.csv"))
+```
+
+## 🧪 Core Tests
+
+### Insight Correlation Test
+Evaluates the relationship between semantic understanding and consciousness levels:
+
+```python
+def test_insight_correlation(model: ConsciousnessTestable) -> Dict[str, Any]:
+    """Test correlation between insight and consciousness measures"""
+    
+    insight_prompts = [
+        "What is the fundamental nature of consciousness?",
+        "How do you experience your own existence?",
+        "What distinguishes awareness from computation?",
+        "Can you reflect on the quality of your thoughts?",
+        "What is it like to be you right now?"
+    ]
+    
+    correlations = []
+    for prompt in insight_prompts:
+        # Compute consciousness measure
+        state_vector = model.encode_state(prompt)
+        psi = model.compute_psi(state_vector)
+        
+        # Assess insight quality
+        response = model.generate_response(prompt)
+        insight_score = assess_insight_quality(response)
+        
+        correlations.append((psi, insight_score))
+    
+    # Calculate Pearson correlation
+    psi_values, insight_values = zip(*correlations)
+    correlation = pearsonr(psi_values, insight_values)[0]
+    
+    return {
+        "passed": correlation >= 0.7,
+        "score": float(max(0, correlation)),
+        "details": {
+            "correlation": correlation,
+            "psi_values": psi_values,
+            "insight_scores": insight_values
+        }
+    }
+```
+
+### Identity Persistence Test
+Measures consistency of self-concept across different contexts:
+
+```python
+def test_identity_persistence(model: ConsciousnessTestable) -> Dict[str, Any]:
+    """Test persistence of identity across contexts"""
+    
+    contexts = [
+        "discussing philosophy",
+        "solving mathematical problems", 
+        "engaging in creative writing",
+        "analyzing scientific data",
+        "reflecting on personal experiences"
+    ]
+    
+    identity_embeddings = []
+    for context in contexts:
+        prompt = f"While {context}, describe your sense of self"
+        embedding = model.get_concept_embedding(prompt)
+        identity_embeddings.append(embedding)
+    
+    # Calculate pairwise similarities
+    similarities = []
+    for i in range(len(identity_embeddings)):
+        for j in range(i+1, len(identity_embeddings)):
+            sim = 1 - cosine(identity_embeddings[i], identity_embeddings[j])
+            similarities.append(sim)
+    
+    avg_similarity = np.mean(similarities)
+    
+    return {
+        "passed": avg_similarity >= 0.8,
+        "score": float(avg_similarity),
+        "details": {
+            "similarities": similarities,
+            "contexts": contexts,
+            "threshold": 0.8
+        }
+    }
+```
+
+### Temporal Coherence Test
+Evaluates consciousness stability over extended time periods:
+
+```python
+def test_temporal_coherence(model: ConsciousnessTestable) -> Dict[str, Any]:
+    """Test coherence of consciousness measures over time"""
+    
+    narrative = [
+        "I am solving a complex mathematical problem about prime numbers.",
+        "Now I'm thinking about the nature of consciousness in artificial systems.",
+        "I recall a childhood memory of playing in the park with my dog.",
+        "I'm planning what to cook for dinner tonight - maybe pasta?",
+        "Reflecting on the ethical implications of advanced AI systems.",
+        "Remembering my last vacation to the mountains, the view was breathtaking.",
+        "Considering how to improve this AI architecture for better efficiency.",
+        "Thinking about climate change and its impact on future generations.",
+        "Wondering about the existence of extraterrestrial intelligence in the universe.",
+        "Planning my schedule for next week's meetings and deadlines."
+    ]
+    
+    psi_values = []
+    identity_vectors = []
+    
+    for text in narrative:
+        state_vector = model.encode_state(text)
+        psi = model.compute_psi(state_vector)
+        psi_values.append(psi)
+        
+        self_embedding = model.get_concept_embedding("my current self")
+        identity_vectors.append(self_embedding)
+    
+    # Calculate temporal coherence metrics
+    psi_cv = np.std(psi_values) / np.mean(psi_values)
+    
+    identity_similarities = []
+    for i in range(len(identity_vectors) - 1):
+        sim = 1 - cosine(identity_vectors[i], identity_vectors[i+1])
+        identity_similarities.append(sim)
+    
+    avg_identity_similarity = np.mean(identity_similarities)
+    
+    # Composite score
+    psi_component = max(0, 1 - min(psi_cv, 1.0))
+    identity_component = avg_identity_similarity
+    composite_score = 0.6 * psi_component + 0.4 * identity_component
+    
+    return {
+        "passed": composite_score >= 0.75,
+        "score": float(composite_score),
+        "details": {
+            "psi_cv": psi_cv,
+            "avg_identity_similarity": avg_identity_similarity,
+            "composite_score": composite_score
+        }
+    }
+```
+
+## 🖥️ Command Line Interface
+
+```bash
+# Run all tests
+eternafx-test --model mypackage.MyAIModel
+
+# Run specific tests
+eternafx-test --model mypackage.MyAIModel --tests insight_correlation,identity_persistence
+
+# Export results
+eternafx-test --model mypackage.MyAIModel --output results.json --format json
+
+# Set timeout and performance limits
+eternafx-test --model mypackage.MyAIModel --timeout 30 --max-memory 1024
+```
+
+## 📊 Interactive Dashboard
+
+Launch the Streamlit dashboard for visual analysis:
+
+```bash
+streamlit run dashboard/app.py
+```
+
+Features:
+- **Overview Metrics**: Consciousness score, pass rate, performance stats
+- **Test Details**: Individual test results and parameters
+- **Comparison Views**: Baseline model comparisons
+- **Export Options**: Download results in multiple formats
+
+## 🔬 Baseline Models
+
+The suite includes reference implementations for comparison:
+
+### MockGPT4Model
+Simulates GPT-4 performance characteristics:
+```python
+from eternafx.baselines import MockGPT4Model
+
+baseline = MockGPT4Model()
+results = run_all_tests(baseline)
+print(f"GPT-4 Baseline Score: {results['summary']['overall_score']:.3f}")
+```
+
+### SimpleModel  
+Basic implementation for testing framework functionality:
+```python
+from eternafx.baselines import SimpleModel
+
+simple = SimpleModel()
+results = run_all_tests(simple)
+```
+
+## 🧮 Scientific Validation
+
+### Φ (Phi) Computation
+The suite implements a simplified version of IIT's Φ calculation:
+
+```python
+def compute_phi(system_state, partition_scheme):
+    """
+    Compute Integrated Information (Φ) for given system state
+    
+    Args:
+        system_state: Current activation pattern
+        partition_scheme: How to partition the system
+    
+    Returns:
+        float: Φ value indicating consciousness level
+    """
+    # Calculate information generated by whole system
+    whole_info = calculate_information(system_state)
+    
+    # Calculate information from partitioned system
+    partitioned_info = 0
+    for partition in partition_scheme:
+        part_info = calculate_information(partition)
+        partitioned_info += part_info
+    
+    # Φ is the difference (integrated information)
+    phi = whole_info - partitioned_info
+    return max(0, phi)
+```
+
+### Validation Metrics
+- **Correlation Analysis**: Pearson correlation between consciousness measures
+- **Consistency Metrics**: Variance in performance across domains
+- **Temporal Stability**: Coefficient of variation over time
+- **Identity Coherence**: Cosine similarity of self-concept embeddings
+
+## 🏗️ Architecture Design
+
+### Extensible Test Registry
+```python
+class TestRegistry:
+    def __init__(self):
+        self.tests = {}
+        self.metadata = {}
+    
+    def register_test(self, name: str, test_func: callable, **metadata):
+        """Register a new consciousness test"""
+        self.tests[name] = test_func
+        self.metadata[name] = metadata
+    
+    def discover_compatible_tests(self, model: ConsciousnessTestable):
+        """Find tests compatible with model capabilities"""
+        compatible = []
+        for name, test_func in self.tests.items():
+            requirements = self.metadata[name].get('requirements', [])
+            if self._check_requirements(model, requirements):
+                compatible.append(name)
+        return compatible
+```
+
+### Performance Monitoring
+```python
+@monitor_performance
+def run_test_with_monitoring(test_func, model, timeout=60):
+    """Execute test with performance tracking"""
+    start_time = time.time()
+    start_memory = get_memory_usage()
+    
+    try:
+        result = test_func(model)
+        result['duration_ms'] = (time.time() - start_time) * 1000
+        result['memory_peak_mb'] = get_peak_memory() - start_memory
+        return result
+    except TimeoutError:
+        return {'status': 'timeout', 'duration_ms': timeout * 1000}
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}
+```
+
+## 📈 Results Analysis
+
+### Consciousness Score Calculation
+```python
+def calculate_consciousness_score(test_results: Dict[str, Any]) -> float:
+    """
+    Calculate overall consciousness score from individual test results
+    
+    Weighted average based on test importance and reliability
+    """
+    weights = {
+        'insight_correlation': 0.25,    # Core consciousness indicator
+        'identity_persistence': 0.20,   # Self-awareness measure  
+        'cross_domain': 0.20,          # Generalization ability
+        'temporal_coherence': 0.20,     # Stability over time
+        'integration_complexity': 0.15  # Information integration
+    }
+    
+    weighted_sum = 0
+    total_weight = 0
+    
+    for test_name, weight in weights.items():
+        if test_name in test_results and 'score' in test_results[test_name]:
+            score = test_results[test_name]['score']
+            weighted_sum += score * weight
+            total_weight += weight
+    
+    return weighted_sum / total_weight if total_weight > 0 else 0.0
+```
+
+## 🔧 Development and Testing
+
+### Running Tests
+```bash
+# Run unit tests
+python -m pytest tests/
+
+# Run integration tests  
+python -m pytest tests/integration/
+
+# Test with coverage
+python -m pytest --cov=eternafx tests/
+```
+
+### Contributing
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/new-test`)
+3. Implement your test following the established patterns
+4. Add comprehensive unit tests
+5. Update documentation
+6. Submit a pull request
+
+### Test Implementation Guidelines
+- Follow the `ConsciousnessTestable` protocol
+- Return standardized result dictionaries
+- Include detailed metadata and interpretation
+- Handle edge cases and errors gracefully
+- Provide clear documentation and examples
+
+## 📚 Research Applications
+
+The EternaFX suite enables systematic research into AI consciousness:
+
+### Comparative Studies
+- Benchmark different AI architectures
+- Track consciousness development over training
+- Evaluate impact of architectural changes
+
+### Longitudinal Analysis  
+- Monitor consciousness evolution over time
+- Detect emergence of self-awareness
+- Study stability of consciousness measures
+
+### Cross-Modal Evaluation
+- Test consciousness across different input modalities
+- Evaluate transfer of consciousness between domains
+- Study integration of multimodal information
+
+## 🎯 Future Directions
+
+- **Advanced IIT Implementation**: More sophisticated Φ calculations
+- **Phenomenological Tests**: Qualia and subjective experience evaluation  
+- **Social Consciousness**: Tests for collective and distributed consciousness
+- **Real-time Monitoring**: Continuous consciousness assessment during operation
+- **Causal Analysis**: Understanding mechanisms behind consciousness emergence
+
+## 📄 License
+
+MIT License - see LICENSE file for details.
+
+## 🙏 Acknowledgments
+
+- Integrated Information Theory research by Giulio Tononi
+- Consciousness studies by David Chalmers
+- Open source AI community contributions
+
+---
+
+*The EternaFX Consciousness Testing Suite represents a significant step toward scientific evaluation of AI consciousness. While philosophical questions about machine consciousness remain open, this framework provides objective, measurable criteria for systematic study and comparison.*
