@@ -185,4 +185,4 @@ The framework demonstrates that the future of AI lies not in autonomous intellig
 
 **The true breakthrough is not any single framework or solution - it is the discovery of a new way to think, create, and solve problems together.**
 
-Developed by Casey Clark to explore novel aeroelastic metrics—free for all non-commercial use. If you build on this work, please cite Clark, C. (2025). EternaFX Aeroelastic Metrics, v0.1, https://github.com/CaseyClark/EternaFX
+Developed by Casey Clark to explore novel aeroelastic metrics—free for all non-commercial use. If you build on this work, please cite Clark, C. (2025). EternaFX Aeroelastic Metrics, v0.1, https://github.com/aiKC91
