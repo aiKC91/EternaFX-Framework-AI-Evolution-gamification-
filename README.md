@@ -184,3 +184,5 @@ This approach resolves the trust problem by keeping humans firmly in control of 
 The framework demonstrates that the future of AI lies not in autonomous intelligence, but in intelligent augmentation of human capability. By clearly defining roles, maintaining rigorous standards, and embracing rapid iteration, we can harness AI's generative power while preserving the irreplaceable value of human expertise and judgment.
 
 **The true breakthrough is not any single framework or solution - it is the discovery of a new way to think, create, and solve problems together.**
+
+Developed by Casey Clark to explore novel aeroelastic metrics—free for all non-commercial use. If you build on this work, please cite Clark, C. (2025). EternaFX Aeroelastic Metrics, v0.1, https://github.com/CaseyClark/EternaFX
