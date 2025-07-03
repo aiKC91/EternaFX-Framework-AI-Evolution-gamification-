@@ -1,0 +1,202 @@
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import PCA
+from sklearn.metrics.pairwise import pairwise_distances
+import re
+from typing import List, Tuple, Dict
+
+def enhanced_topo_summarize(document: str, n_summary_points: int = 5, embedding_dim: int = 3) -> str:
+    """
+    Enhanced topological summarization using persistent homology principles.
+    
+    1. Embed sentences via TF-IDF → PCA into lower-dimensional space
+    2. Compute persistence-inspired features to identify conceptual structure
+    3. Use topological density and distance metrics to select representative sentences
+    4. Return summary highlighting key "conceptual holes" and themes
+    """
+    
+    # Preprocess: Split into sentences more robustly
+    sentences = re.split(r'[.!?]+', document)
+    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
+    
+    if len(sentences) < n_summary_points:
+        return " ● ".join(sentences)
+    
+    # 1. Create sentence embeddings
+    vectorizer = TfidfVectorizer(
+        max_features=min(500, len(sentences) * 10),
+        stop_words='english',
+        ngram_range=(1, 2)
+    )
+    
+    try:
+        tfidf_matrix = vectorizer.fit_transform(sentences)
+        
+        # Reduce dimensionality while preserving topological structure
+        n_components = min(embedding_dim, tfidf_matrix.shape[1], len(sentences))
+        pca = PCA(n_components=n_components)
+        embeddings = pca.fit_transform(tfidf_matrix.toarray())
+        
+    except ValueError:
+        # Fallback for very short documents
+        return " ● ".join(sentences[:n_summary_points])
+    
+    # 2. Compute topological features
+    # Distance matrix for topological analysis
+    dist_matrix = pairwise_distances(embeddings, metric='euclidean')
+    
+    # Identify "topological importance" of each sentence
+    topo_scores = compute_topological_importance(embeddings, dist_matrix)
+    
+    # 3. Persistent homology-inspired clustering
+    # Find sentences that form "conceptual loops" or are topologically significant
+    summary_indices = select_topological_representatives(
+        embeddings, topo_scores, dist_matrix, n_summary_points
+    )
+    
+    # 4. Order by original document order for coherent reading
+    summary_indices = sorted(summary_indices)
+    summary_sentences = [sentences[i] for i in summary_indices]
+    
+    return " ● ".join(summary_sentences)
+
+
+def compute_topological_importance(embeddings: np.ndarray, dist_matrix: np.ndarray) -> np.ndarray:
+    """
+    Compute topological importance scores based on local density and structural position.
+    This approximates persistent homology insights without full computation.
+    """
+    n_points = len(embeddings)
+    scores = np.zeros(n_points)
+    
+    for i in range(n_points):
+        # Local density (inverse of average distance to k-nearest neighbors)
+        k = min(5, n_points - 1)
+        knn_distances = np.partition(dist_matrix[i], k)[:k+1][1:]  # Exclude self
+        local_density = 1.0 / (np.mean(knn_distances) + 1e-8)
+        
+        # Centrality (inverse of distance to geometric center)
+        center = np.mean(embeddings, axis=0)
+        centrality = 1.0 / (np.linalg.norm(embeddings[i] - center) + 1e-8)
+        
+        # Structural importance (how much removing this point would change topology)
+        # Approximated by variance in distances to other points
+        structural_impact = np.var(dist_matrix[i])
+        
+        # Combined score
+        scores[i] = local_density * 0.4 + centrality * 0.3 + structural_impact * 0.3
+    
+    return scores
+
+
+def select_topological_representatives(
+    embeddings: np.ndarray, 
+    topo_scores: np.ndarray, 
+    dist_matrix: np.ndarray,
+    n_select: int
+) -> List[int]:
+    """
+    Select representative sentences that capture topological diversity.
+    This ensures we don't just pick the highest-scoring sentences, but maintain
+    good coverage of the conceptual space.
+    """
+    selected = []
+    remaining = set(range(len(embeddings)))
+    
+    # Start with the highest topologically important sentence
+    first_idx = np.argmax(topo_scores)
+    selected.append(first_idx)
+    remaining.remove(first_idx)
+    
+    # Greedily select sentences that are topologically important AND diverse
+    for _ in range(n_select - 1):
+        if not remaining:
+            break
+            
+        best_idx = None
+        best_score = -np.inf
+        
+        for candidate in remaining:
+            # Base topological importance
+            importance = topo_scores[candidate]
+            
+            # Diversity bonus (distance from already selected sentences)
+            min_dist_to_selected = min(dist_matrix[candidate][s] for s in selected)
+            diversity_bonus = min_dist_to_selected
+            
+            # Combined score favoring both importance and diversity
+            combined_score = importance + 0.5 * diversity_bonus
+            
+            if combined_score > best_score:
+                best_score = combined_score
+                best_idx = candidate
+        
+        if best_idx is not None:
+            selected.append(best_idx)
+            remaining.remove(best_idx)
+    
+    return selected
+
+
+def analyze_conceptual_structure(document: str) -> Dict:
+    """
+    Analyze the topological structure of the document and return insights.
+    """
+    sentences = re.split(r'[.!?]+', document)
+    sentences = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 10]
+    
+    if len(sentences) < 3:
+        return {"error": "Document too short for topological analysis"}
+    
+    # Create embeddings
+    vectorizer = TfidfVectorizer(max_features=500, stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(sentences)
+    
+    # Reduce to 3D for visualization
+    pca = PCA(n_components=min(3, tfidf_matrix.shape[1]))
+    embeddings = pca.fit_transform(tfidf_matrix.toarray())
+    
+    # Compute distance matrix
+    dist_matrix = pairwise_distances(embeddings)
+    
+    # Analyze structure
+    avg_distance = np.mean(dist_matrix[np.triu_indices_from(dist_matrix, k=1)])
+    max_distance = np.max(dist_matrix)
+    
+    # Identify potential "conceptual holes" (areas of high distance variance)
+    distance_variances = np.var(dist_matrix, axis=1)
+    hole_candidates = np.where(distance_variances > np.percentile(distance_variances, 80))[0]
+    
+    return {
+        "n_sentences": len(sentences),
+        "avg_semantic_distance": avg_distance,
+        "max_semantic_distance": max_distance,
+        "potential_conceptual_holes": len(hole_candidates),
+        "topological_complexity": np.mean(distance_variances),
+        "embedding_dimensions": embeddings.shape[1]
+    }
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Test document
+    doc = """EternaFX merges human critique with AI speculation. It uses topology to measure idea complexity.
+    Each loop in the embedding signals a conceptual gap worth filling. By summarizing across those loops,
+    we pinpoint the true 'holes' in understanding that demand attention. The system works by first embedding
+    text into high-dimensional space. Then it applies persistent homology to find topological features.
+    These features represent recurring themes and conceptual gaps. The final step extracts sentences that
+    best represent these topological structures. This approach is fundamentally different from traditional
+    summarization methods that rely on keyword frequency or attention mechanisms."""
+    
+    print("=== Enhanced Topological Summary ===")
+    summary = enhanced_topo_summarize(doc, n_summary_points=3)
+    print(summary)
+    
+    print("\n=== Topological Structure Analysis ===")
+    analysis = analyze_conceptual_structure(doc)
+    for key, value in analysis.items():
+        print(f"{key}: {value}")
+    
+    print("\n=== Comparison with Original Approach ===")
+    # Here you would run the original topo_summarize function for comparison
+    # (assuming ripser is installed)
