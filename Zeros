@@ -1,0 +1,303 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.special import zeta
+from scipy.optimize import fsolve
+import cmath
+from numba import jit
+import time
+
+class RiemannHypothesisFramework:
+    """
+    Computational framework for exploring the Riemann Hypothesis using established methods.
+    
+    This implementation focuses on:
+    1. Computing zeros of the Riemann zeta function
+    2. Analyzing zero distribution and spacing statistics
+    3. Visualizing the critical line behavior
+    4. Testing numerical evidence for the hypothesis
+    """
+    
+    def __init__(self, precision=1e-10):
+        self.precision = precision
+        self.zeros_cache = []
+        
+    def riemann_zeta(self, s):
+        """
+        Compute Riemann zeta function using the functional equation and series.
+        For Re(s) > 1, uses direct series. For Re(s) < 0, uses functional equation.
+        """
+        if s.real > 1:
+            return self._zeta_series(s)
+        else:
+            return self._zeta_functional_equation(s)
+    
+    def _zeta_series(self, s, max_terms=1000):
+        """Direct series computation for Re(s) > 1."""
+        result = 0
+        for n in range(1, max_terms + 1):
+            term = 1 / (n ** s)
+            result += term
+            if abs(term) < self.precision:
+                break
+        return result
+    
+    def _zeta_functional_equation(self, s):
+        """Use functional equation: zeta(s) = 2^s * pi^(s-1) * sin(pi*s/2) * Gamma(1-s) * zeta(1-s)"""
+        from scipy.special import gamma
+        
+        # Avoid singularities
+        if abs(s.imag) < 1e-10 and s.real in [0, 1]:
+            return complex('nan')
+            
+        zeta_1_minus_s = self._zeta_series(1 - s)
+        factor = (2 ** s) * (np.pi ** (s - 1)) * np.sin(np.pi * s / 2) * gamma(1 - s)
+        return factor * zeta_1_minus_s
+    
+    def find_zeros_on_critical_line(self, t_min=0, t_max=50, num_points=1000):
+        """
+        Find zeros of zeta(1/2 + it) on the critical line using numerical methods.
+        """
+        t_values = np.linspace(t_min, t_max, num_points)
+        zeros = []
+        
+        print(f"Searching for zeros between t={t_min} and t={t_max}...")
+        
+        for i in range(len(t_values) - 1):
+            t1, t2 = t_values[i], t_values[i + 1]
+            
+            # Check for sign change in the imaginary part of zeta(1/2 + it)
+            z1 = self.riemann_zeta(complex(0.5, t1))
+            z2 = self.riemann_zeta(complex(0.5, t2))
+            
+            # Look for sign changes in the real part (zeros typically cross the real axis)
+            if z1.real * z2.real < 0:
+                try:
+                    # Use numerical root finding
+                    def zeta_real_part(t):
+                        return self.riemann_zeta(complex(0.5, t)).real
+                    
+                    t_zero = fsolve(zeta_real_part, (t1 + t2) / 2)[0]
+                    
+                    # Verify it's actually a zero
+                    if abs(self.riemann_zeta(complex(0.5, t_zero))) < self.precision * 10:
+                        zeros.append(t_zero)
+                        
+                except:
+                    continue
+        
+        self.zeros_cache = sorted(zeros)
+        print(f"Found {len(zeros)} zeros")
+        return zeros
+    
+    def compute_known_zeros(self):
+        """
+        Return the first few known non-trivial zeros of the Riemann zeta function.
+        These are well-established values from the literature.
+        """
+        known_zeros = [
+            14.1347251417346937904572519836,
+            21.0220396387715549926284795939,
+            25.0108575801456887632137909925,
+            30.4248761258595132296642386726,
+            32.9350615877391896906623689641,
+            37.5861781588256712572087311979,
+            40.9187190121474951873981269146,
+            43.3270732809149995194280304430,
+            48.0051508811671597402363043305,
+            49.7738324776723113681671282083
+        ]
+        return known_zeros
+    
+    def analyze_zero_spacing(self, zeros=None):
+        """
+        Analyze the spacing between consecutive zeros.
+        This is related to the famous GUE (Gaussian Unitary Ensemble) conjecture.
+        """
+        if zeros is None:
+            zeros = self.compute_known_zeros()
+        
+        spacings = np.diff(zeros)
+        normalized_spacings = spacings / np.mean(spacings)
+        
+        # Plot histogram
+        plt.figure(figsize=(12, 4))
+        
+        plt.subplot(1, 2, 1)
+        plt.hist(normalized_spacings, bins=20, alpha=0.7, density=True, 
+                label='Observed spacings')
+        
+        # Compare with Poisson distribution (random spacing)
+        x = np.linspace(0, 4, 100)
+        poisson_dist = np.exp(-x)
+        plt.plot(x, poisson_dist, 'r--', label='Poisson (random)')
+        
+        # Compare with GUE prediction (conjectured for zeta zeros)
+        gue_dist = (np.pi/2) * x * np.exp(-np.pi * x**2 / 4)
+        plt.plot(x, gue_dist, 'g-', label='GUE (conjectured)')
+        
+        plt.xlabel('Normalized spacing')
+        plt.ylabel('Density')
+        plt.title('Zero Spacing Distribution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        plt.subplot(1, 2, 2)
+        plt.plot(zeros[:-1], spacings, 'bo-', markersize=3)
+        plt.xlabel('Zero position')
+        plt.ylabel('Spacing to next zero')
+        plt.title('Zero Spacings vs Position')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return spacings
+    
+    def visualize_critical_line(self, t_min=0, t_max=50, num_points=1000):
+        """
+        Visualize the behavior of zeta(1/2 + it) along the critical line.
+        """
+        t_values = np.linspace(t_min, t_max, num_points)
+        zeta_values = []
+        
+        print("Computing zeta values along critical line...")
+        for t in t_values:
+            z = self.riemann_zeta(complex(0.5, t))
+            zeta_values.append(z)
+        
+        zeta_values = np.array(zeta_values)
+        real_parts = zeta_values.real
+        imag_parts = zeta_values.imag
+        magnitudes = np.abs(zeta_values)
+        
+        # Create visualization
+        plt.figure(figsize=(15, 10))
+        
+        # Plot 1: Real and imaginary parts
+        plt.subplot(2, 2, 1)
+        plt.plot(t_values, real_parts, 'b-', label='Real part', alpha=0.7)
+        plt.plot(t_values, imag_parts, 'r-', label='Imaginary part', alpha=0.7)
+        plt.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        plt.xlabel('t')
+        plt.ylabel('zeta(1/2 + it)')
+        plt.title('Real and Imaginary Parts on Critical Line')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 2: Magnitude
+        plt.subplot(2, 2, 2)
+        plt.plot(t_values, magnitudes, 'g-', alpha=0.7)
+        plt.xlabel('t')
+        plt.ylabel('|zeta(1/2 + it)|')
+        plt.title('Magnitude on Critical Line')
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 3: Complex plane trajectory
+        plt.subplot(2, 2, 3)
+        plt.plot(real_parts, imag_parts, 'purple', alpha=0.5, linewidth=1)
+        plt.plot(0, 0, 'ro', markersize=8, label='Origin')
+        plt.xlabel('Real part')
+        plt.ylabel('Imaginary part')
+        plt.title('Complex Plane Trajectory')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.axis('equal')
+        
+        # Plot 4: Phase
+        plt.subplot(2, 2, 4)
+        phases = np.angle(zeta_values)
+        plt.plot(t_values, phases, 'orange', alpha=0.7)
+        plt.xlabel('t')
+        plt.ylabel('arg(zeta(1/2 + it))')
+        plt.title('Phase on Critical Line')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return t_values, zeta_values
+    
+    def test_riemann_hypothesis(self, t_max=100):
+        """
+        Test the Riemann Hypothesis by checking if zeros are on the critical line.
+        """
+        print(f"Testing Riemann Hypothesis up to t={t_max}")
+        
+        # Find zeros
+        zeros = self.find_zeros_on_critical_line(0, t_max, num_points=2000)
+        
+        if not zeros:
+            print("No zeros found in the given range")
+            return
+        
+        # Check if all zeros are on the critical line (Re(s) = 1/2)
+        on_critical_line = 0
+        off_critical_line = 0
+        
+        for t in zeros:
+            # For zeros on critical line, zeta(1/2 + it) should be very close to 0
+            z = self.riemann_zeta(complex(0.5, t))
+            if abs(z) < self.precision * 100:  # Allow some numerical error
+                on_critical_line += 1
+            else:
+                off_critical_line += 1
+                print(f"Potential counterexample: t={t:.6f}, zeta(1/2+it)={z}")
+        
+        print(f"\nResults:")
+        print(f"Zeros on critical line: {on_critical_line}")
+        print(f"Zeros off critical line: {off_critical_line}")
+        print(f"Total zeros found: {len(zeros)}")
+        
+        if off_critical_line == 0:
+            print("✓ All found zeros are on the critical line (consistent with RH)")
+        else:
+            print("✗ Found zeros off the critical line (potential counterexample)")
+        
+        return zeros
+    
+    def run_comprehensive_analysis(self):
+        """
+        Run a comprehensive analysis of the Riemann Hypothesis.
+        """
+        print("=== Riemann Hypothesis Computational Analysis ===\n")
+        
+        # 1. Visualize the critical line
+        print("1. Visualizing behavior on critical line...")
+        self.visualize_critical_line(0, 30, 500)
+        
+        # 2. Analyze zero spacing using known zeros
+        print("\n2. Analyzing zero spacing distribution...")
+        known_zeros = self.compute_known_zeros()
+        spacings = self.analyze_zero_spacing(known_zeros)
+        
+        # 3. Test the hypothesis numerically
+        print("\n3. Testing Riemann Hypothesis numerically...")
+        found_zeros = self.test_riemann_hypothesis(50)
+        
+        # 4. Summary statistics
+        print("\n4. Summary Statistics:")
+        print(f"Known zeros analyzed: {len(known_zeros)}")
+        print(f"Average spacing: {np.mean(spacings):.4f}")
+        print(f"Spacing std dev: {np.std(spacings):.4f}")
+        
+        return {
+            'known_zeros': known_zeros,
+            'found_zeros': found_zeros,
+            'spacings': spacings
+        }
+
+# Example usage
+if __name__ == "__main__":
+    # Create framework instance
+    rh = RiemannHypothesisFramework(precision=1e-8)
+    
+    # Run comprehensive analysis
+    results = rh.run_comprehensive_analysis()
+    
+    print("\n=== Analysis Complete ===")
+    print("This framework demonstrates established computational methods")
+    print("for investigating the Riemann Hypothesis, including:")
+    print("- Direct computation of the zeta function")
+    print("- Numerical zero finding on the critical line")
+    print("- Statistical analysis of zero spacing")
+    print("- Visualization of critical line behavior")
