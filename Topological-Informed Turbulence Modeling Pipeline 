@@ -1,0 +1,568 @@
+#!/usr/bin/env python3
+"""
+Topologically-Informed Turbulence Modeling Pipeline
+==================================================
+
+This module implements the TDA-based effective viscosity model for Large Eddy
+Simulations (LES), using Betti numbers to modulate subgrid-scale (SGS) models.
+
+Key Components:
+- 2D/3D flow field generation and preprocessing
+- Persistent homology computation via GUDHI
+- Effective viscosity model: ν_eff = ν₀ × (1 + α × β₁)
+- LES simulation interface and benchmarking
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter
+from scipy import ndimage
+import cv2
+from typing import Tuple, Dict, List, Optional, Callable
+import time
+
+try:
+    import gudhi
+    GUDHI_AVAILABLE = True
+except ImportError:
+    print("GUDHI not available. Install with: pip install gudhi")
+    GUDHI_AVAILABLE = False
+
+# Configuration
+GRID_SIZE = 128  # Spatial resolution
+TIME_STEPS = 100  # Number of time steps for simulation
+REYNOLDS_NUMBER = 1000  # Reynolds number for flow
+VISCOSITY_BASE = 1e-3  # Base kinematic viscosity ν₀
+TDA_SCALING_FACTOR = 0.5  # α parameter in ν_eff = ν₀(1 + α × β₁)
+
+class FlowFieldGenerator:
+    """Generate 2D turbulent flow fields for TDA analysis."""
+    
+    def __init__(self, grid_size: int = GRID_SIZE, reynolds: float = REYNOLDS_NUMBER):
+        self.grid_size = grid_size
+        self.reynolds = reynolds
+        self.x = np.linspace(0, 2*np.pi, grid_size)
+        self.y = np.linspace(0, 2*np.pi, grid_size)
+        self.X, self.Y = np.meshgrid(self.x, self.y)
+        
+    def taylor_green_vortex(self, t: float = 0) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Generate Taylor-Green vortex flow field.
+        Returns velocity components (u, v) and vorticity ω.
+        """
+        decay = np.exp(-2*t/self.reynolds)
+        
+        # Velocity components
+        u = np.sin(self.X) * np.cos(self.Y) * decay
+        v = -np.cos(self.X) * np.sin(self.Y) * decay
+        
+        # Vorticity
+        omega = 2 * np.sin(self.X) * np.sin(self.Y) * decay
+        
+        return u, v, omega
+    
+    def forced_isotropic_turbulence(self, t: float = 0, forcing_scale: float = 4) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Generate synthetic forced isotropic turbulence using random Fourier modes.
+        """
+        np.random.seed(int(t * 1000) % 1000)  # Time-dependent but reproducible
+        
+        # Generate random Fourier coefficients
+        kx = np.fft.fftfreq(self.grid_size, 1/(2*np.pi))
+        ky = np.fft.fftfreq(self.grid_size, 1/(2*np.pi))
+        KX, KY = np.meshgrid(kx, ky)
+        K = np.sqrt(KX**2 + KY**2)
+        
+        # Energy spectrum E(k) ∝ k^(-5/3) for inertial range
+        energy_spectrum = np.zeros_like(K)
+        mask = (K > 0) & (K < self.grid_size // 4)
+        energy_spectrum[mask] = K[mask]**(-5/3) * np.exp(-(K[mask]/forcing_scale)**2)
+        
+        # Random phases
+        phase_u = 2 * np.pi * np.random.random(K.shape)
+        phase_v = 2 * np.pi * np.random.random(K.shape)
+        
+        # Velocity in Fourier space
+        u_hat = np.sqrt(energy_spectrum) * np.exp(1j * phase_u)
+        v_hat = np.sqrt(energy_spectrum) * np.exp(1j * phase_v)
+        
+        # Enforce incompressibility: ∇ · u = 0
+        # This means k_x * u_hat + k_y * v_hat = 0
+        k_perp_x = -KY / (K + 1e-10)
+        k_perp_y = KX / (K + 1e-10)
+        
+        # Project onto divergence-free space
+        u_hat_proj = u_hat * k_perp_x
+        v_hat_proj = v_hat * k_perp_y
+        
+        # Transform back to physical space
+        u = np.real(np.fft.ifft2(u_hat_proj))
+        v = np.real(np.fft.ifft2(v_hat_proj))
+        
+        # Compute vorticity
+        omega = np.gradient(v, axis=1) - np.gradient(u, axis=0)
+        
+        return u, v, omega
+    
+    def add_intermittency(self, omega: np.ndarray, intermittency_factor: float = 0.3) -> np.ndarray:
+        """Add intermittent structures to vorticity field."""
+        # Create random intermittent bursts
+        burst_locations = np.random.random(omega.shape) < intermittency_factor
+        burst_intensity = np.random.lognormal(0, 1, omega.shape)
+        
+        omega_intermittent = omega.copy()
+        omega_intermittent[burst_locations] *= burst_intensity[burst_locations]
+        
+        return omega_intermittent
+
+class TopologicalAnalyzer:
+    """Extract topological features from flow fields using persistent homology."""
+    
+    def __init__(self, max_dimension: int = 2):
+        self.max_dimension = max_dimension
+        if not GUDHI_AVAILABLE:
+            raise ImportError("GUDHI is required for topological analysis")
+    
+    def preprocess_field(self, field: np.ndarray, threshold_percentile: float = 50) -> Tuple[np.ndarray, float]:
+        """
+        Preprocess vorticity field for TDA.
+        Convert to binary or filtration suitable for persistent homology.
+        """
+        # Smooth the field to reduce noise
+        smoothed = gaussian_filter(field, sigma=1.0)
+        
+        # Create sublevelset filtration based on vorticity magnitude
+        abs_field = np.abs(smoothed)
+        threshold = np.percentile(abs_field, threshold_percentile)
+        
+        return abs_field, threshold
+    
+    def compute_persistent_homology(self, field: np.ndarray, 
+                                  method: str = 'cubical') -> Optional[gudhi.SimplexTree]:
+        """
+        Compute persistent homology of the flow field.
+        
+        Args:
+            field: 2D vorticity field
+            method: 'cubical' for cubical complex, 'rips' for Vips complex
+        """
+        if method == 'cubical':
+            # Use cubical complex for image data
+            cubical_complex = gudhi.CubicalComplex(dimensions=field.shape, 
+                                                  top_dimensional_cells=field.flatten())
+            cubical_complex.compute_persistence()
+            return cubical_complex
+        
+        elif method == 'rips':
+            # Extract point cloud from vorticity maxima
+            processed_field, threshold = self.preprocess_field(field)
+            
+            # Find local maxima
+            local_maxima = (processed_field > threshold) & \
+                          (processed_field == ndimage.maximum_filter(processed_field, size=3))
+            
+            # Get coordinates of maxima
+            y_coords, x_coords = np.where(local_maxima)
+            points = np.column_stack([x_coords, y_coords])
+            
+            if len(points) < 3:
+                return None
+            
+            # Create Rips complex
+            rips_complex = gudhi.RipsComplex(points=points, max_edge_length=10.0)
+            simplex_tree = rips_complex.create_simplex_tree(max_dimension=self.max_dimension)
+            simplex_tree.compute_persistence()
+            return simplex_tree
+        
+        else:
+            raise ValueError("Method must be 'cubical' or 'rips'")
+    
+    def extract_betti_numbers(self, persistence_pairs) -> Dict[int, int]:
+        """Extract Betti numbers from persistence pairs."""
+        betti_numbers = {i: 0 for i in range(self.max_dimension + 1)}
+        
+        if persistence_pairs is None:
+            return betti_numbers
+        
+        for pair in persistence_pairs:
+            dimension = pair[0]
+            birth = pair[1][0]
+            death = pair[1][1]
+            
+            # Count features that persist significantly
+            if dimension <= self.max_dimension:
+                if death == np.inf or (death - birth) > 0.1:  # Persistence threshold
+                    betti_numbers[dimension] += 1
+        
+        return betti_numbers
+    
+    def analyze_flow_topology(self, vorticity_field: np.ndarray) -> Dict:
+        """
+        Complete topological analysis of a vorticity field.
+        Returns Betti numbers and other topological features.
+        """
+        # Compute persistent homology
+        simplex_tree = self.compute_persistent_homology(vorticity_field, method='cubical')
+        
+        if simplex_tree is None:
+            return {'betti_numbers': {0: 0, 1: 0, 2: 0}, 'persistence_pairs': []}
+        
+        # Extract persistence pairs
+        persistence_pairs = simplex_tree.persistence()
+        
+        # Extract Betti numbers
+        betti_numbers = self.extract_betti_numbers(persistence_pairs)
+        
+        return {
+            'betti_numbers': betti_numbers,
+            'persistence_pairs': persistence_pairs,
+            'total_features': sum(betti_numbers.values()),
+            'topological_complexity': betti_numbers.get(1, 0)  # Focus on 1D holes (vortex cores)
+        }
+
+class EffectiveViscosityModel:
+    """
+    Implement topologically-informed effective viscosity for LES.
+    ν_eff = ν₀ × (1 + α × β₁)
+    """
+    
+    def __init__(self, base_viscosity: float = VISCOSITY_BASE, 
+                 scaling_factor: float = TDA_SCALING_FACTOR):
+        self.nu_0 = base_viscosity
+        self.alpha = scaling_factor
+        
+    def compute_effective_viscosity(self, betti_1: int, local_strain_rate: Optional[float] = None) -> float:
+        """
+        Compute effective viscosity based on topological complexity.
+        
+        Args:
+            betti_1: First Betti number (number of holes/vortex cores)
+            local_strain_rate: Optional local strain rate for additional scaling
+        """
+        # Basic topological modulation
+        nu_eff = self.nu_0 * (1 + self.alpha * betti_1)
+        
+        # Optional: add strain rate dependence for Smagorinsky-like behavior
+        if local_strain_rate is not None:
+            strain_contribution = 0.1 * local_strain_rate**2
+            nu_eff += strain_contribution
+        
+        return nu_eff
+    
+    def compute_sgs_stress_tensor(self, velocity_gradient: np.ndarray, 
+                                beta_1: int, grid_spacing: float) -> Tuple[np.ndarray, float]:
+        """
+        Compute subgrid-scale stress tensor with topological modulation.
+        
+        Args:
+            velocity_gradient: 3x3 velocity gradient tensor ∂u_i/∂x_j
+            beta_1: First Betti number from topological analysis
+            grid_spacing: LES grid spacing Δ
+        """
+        # Strain rate tensor
+        S = 0.5 * (velocity_gradient + velocity_gradient.T)
+        
+        # Strain rate magnitude
+        strain_magnitude = np.sqrt(2 * np.sum(S * S))
+        
+        # Effective viscosity with topological modulation
+        nu_eff = self.compute_effective_viscosity(beta_1, strain_magnitude)
+        
+        # SGS stress tensor τ_ij = -2 ν_eff S_ij
+        tau_sgs = -2 * nu_eff * S
+        
+        return tau_sgs, nu_eff
+
+class LESBenchmark:
+    """Benchmark topological SGS model against standard models."""
+    
+    def __init__(self, grid_size: int = GRID_SIZE):
+        self.grid_size = grid_size
+        self.flow_generator = FlowFieldGenerator(grid_size)
+        if GUDHI_AVAILABLE:
+            self.topo_analyzer = TopologicalAnalyzer()
+        self.viscosity_model = EffectiveViscosityModel()
+        
+    def run_time_series_analysis(self, time_steps: int = TIME_STEPS, 
+                                flow_type: str = 'taylor_green') -> Dict:
+        """
+        Run time series analysis of flow evolution with topological features.
+        
+        Args:
+            time_steps: Number of time steps to simulate
+            flow_type: Type of flow ('taylor_green' or 'isotropic_turbulence')
+        """
+        results = {
+            'time': [],
+            'betti_numbers': [],
+            'effective_viscosity': [],
+            'kinetic_energy': [],
+            'enstrophy': []
+        }
+        
+        dt = 0.1  # Time step
+        
+        print(f"Running {flow_type} analysis for {time_steps} time steps...")
+        
+        for t in range(time_steps):
+            current_time = t * dt
+            
+            # Generate flow field
+            if flow_type == 'taylor_green':
+                u, v, omega = self.flow_generator.taylor_green_vortex(current_time)
+            elif flow_type == 'isotropic_turbulence':
+                u, v, omega = self.flow_generator.forced_isotropic_turbulence(current_time)
+            else:
+                raise ValueError("flow_type must be 'taylor_green' or 'isotropic_turbulence'")
+            
+            # Add intermittency for more realistic turbulence
+            if flow_type == 'isotropic_turbulence':
+                omega = self.flow_generator.add_intermittency(omega, 0.2)
+            
+            # Compute flow statistics
+            kinetic_energy = 0.5 * np.mean(u**2 + v**2)
+            enstrophy = 0.5 * np.mean(omega**2)
+            
+            # Topological analysis
+            if GUDHI_AVAILABLE:
+                try:
+                    topo_features = self.topo_analyzer.analyze_flow_topology(omega)
+                    betti_1 = topo_features['betti_numbers'].get(1, 0)
+                    
+                    # Compute effective viscosity
+                    strain_rate = np.sqrt(np.mean(np.gradient(u)[0]**2 + np.gradient(v)[1]**2))
+                    nu_eff = self.viscosity_model.compute_effective_viscosity(betti_1, strain_rate)
+                    
+                except Exception as e:
+                    print(f"TDA analysis failed at t={current_time:.2f}: {e}")
+                    betti_1 = 0
+                    nu_eff = self.viscosity_model.nu_0
+            else:
+                betti_1 = 0
+                nu_eff = self.viscosity_model.nu_0
+            
+            # Store results
+            results['time'].append(current_time)
+            results['betti_numbers'].append(betti_1)
+            results['effective_viscosity'].append(nu_eff)
+            results['kinetic_energy'].append(kinetic_energy)
+            results['enstrophy'].append(enstrophy)
+            
+            if t % 20 == 0:
+                print(f"  t={current_time:.2f}: β₁={betti_1}, ν_eff={nu_eff:.2e}, KE={kinetic_energy:.3f}")
+        
+        return results
+    
+    def compare_sgs_models(self, test_case: str = 'taylor_green') -> Dict:
+        """
+        Compare topological SGS model with standard models.
+        """
+        print(f"Comparing SGS models for {test_case} vortex...")
+        
+        # Generate reference flow
+        if test_case == 'taylor_green':
+            u, v, omega = self.flow_generator.taylor_green_vortex(0.0)
+        else:
+            u, v, omega = self.flow_generator.forced_isotropic_turbulence(0.0)
+        
+        # Compute velocity gradients (simplified 2D case)
+        du_dx, du_dy = np.gradient(u)
+        dv_dx, dv_dy = np.gradient(v)
+        
+        # Standard Smagorinsky model
+        strain_rate = np.sqrt((du_dx)**2 + (dv_dy)**2 + 0.5*(du_dy + dv_dx)**2)
+        cs = 0.1  # Smagorinsky constant
+        delta = 2*np.pi / self.grid_size  # Grid spacing
+        nu_smagorinsky = (cs * delta)**2 * strain_rate
+        
+        # Topological model
+        if GUDHI_AVAILABLE:
+            topo_features = self.topo_analyzer.analyze_flow_topology(omega)
+            betti_1 = topo_features['betti_numbers'].get(1, 0)
+        else:
+            betti_1 = 0
+        
+        nu_topological = np.full_like(u, self.viscosity_model.compute_effective_viscosity(betti_1))
+        
+        # Dynamic Smagorinsky-like model with topology
+        nu_hybrid = nu_smagorinsky + 0.5 * (nu_topological - self.viscosity_model.nu_0)
+        
+        return {
+            'smagorinsky': {
+                'viscosity_field': nu_smagorinsky,
+                'mean_viscosity': np.mean(nu_smagorinsky),
+                'max_viscosity': np.max(nu_smagorinsky)
+            },
+            'topological': {
+                'viscosity_field': nu_topological,
+                'mean_viscosity': np.mean(nu_topological),
+                'betti_1': betti_1
+            },
+            'hybrid': {
+                'viscosity_field': nu_hybrid,
+                'mean_viscosity': np.mean(nu_hybrid),
+                'max_viscosity': np.max(nu_hybrid)
+            }
+        }
+    
+    def visualize_results(self, results: Dict, save_plots: bool = False):
+        """Create visualization of time series results."""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        
+        time = results['time']
+        
+        # Topological complexity evolution
+        ax1.plot(time, results['betti_numbers'], 'b-', linewidth=2, label='β₁')
+        ax1.set_xlabel('Time')
+        ax1.set_ylabel('First Betti Number')
+        ax1.set_title('Topological Complexity Evolution')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        
+        # Effective viscosity evolution
+        ax2.plot(time, results['effective_viscosity'], 'r-', linewidth=2, label='ν_eff')
+        ax2.axhline(y=self.viscosity_model.nu_0, color='k', linestyle='--', 
+                   label='Base viscosity ν₀')
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Effective Viscosity')
+        ax2.set_title('TDA-Modulated Viscosity')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+        
+        # Energy evolution
+        ax3.plot(time, results['kinetic_energy'], 'g-', linewidth=2, label='Kinetic Energy')
+        ax3.set_xlabel('Time')
+        ax3.set_ylabel('Kinetic Energy')
+        ax3.set_title('Flow Energy Evolution')
+        ax3.grid(True, alpha=0.3)
+        ax3.legend()
+        
+        # Enstrophy evolution
+        ax4.plot(time, results['enstrophy'], 'm-', linewidth=2, label='Enstrophy')
+        ax4.set_xlabel('Time')
+        ax4.set_ylabel('Enstrophy')
+        ax4.set_title('Vorticity Squared Evolution')
+        ax4.grid(True, alpha=0.3)
+        ax4.legend()
+        
+        plt.tight_layout()
+        
+        if save_plots:
+            plt.savefig('tda_turbulence_results.png', dpi=300, bbox_inches='tight')
+        
+        plt.show()
+
+    def visualize_flow_fields(self, flow_type: str = 'taylor_green', t: float = 0.5):
+        """Visualize flow fields and topological features."""
+        if flow_type == 'taylor_green':
+            u, v, omega = self.flow_generator.taylor_green_vortex(t)
+        else:
+            u, v, omega = self.flow_generator.forced_isotropic_turbulence(t)
+        
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 12))
+        
+        # Velocity magnitude
+        velocity_mag = np.sqrt(u**2 + v**2)
+        im1 = ax1.imshow(velocity_mag, cmap='viridis', origin='lower')
+        ax1.set_title('Velocity Magnitude')
+        ax1.set_xlabel('x')
+        ax1.set_ylabel('y')
+        plt.colorbar(im1, ax=ax1)
+        
+        # Vorticity field
+        im2 = ax2.imshow(omega, cmap='RdBu_r', origin='lower')
+        ax2.set_title('Vorticity Field ω')
+        ax2.set_xlabel('x')
+        ax2.set_ylabel('y')
+        plt.colorbar(im2, ax=ax2)
+        
+        # Streamlines
+        y_grid = np.linspace(0, 2*np.pi, self.grid_size)
+        x_grid = np.linspace(0, 2*np.pi, self.grid_size)
+        ax3.streamplot(x_grid, y_grid, u, v, density=2, color='k', linewidth=0.5)
+        ax3.set_title('Streamlines')
+        ax3.set_xlabel('x')
+        ax3.set_ylabel('y')
+        ax3.set_aspect('equal')
+        
+        # Topological analysis visualization
+        if GUDHI_AVAILABLE:
+            try:
+                topo_features = self.topo_analyzer.analyze_flow_topology(omega)
+                betti_1 = topo_features['betti_numbers'].get(1, 0)
+                
+                # Highlight regions of high vorticity (potential topological features)
+                high_vorticity = np.abs(omega) > 0.7 * np.max(np.abs(omega))
+                ax4.imshow(omega, cmap='RdBu_r', origin='lower', alpha=0.7)
+                ax4.contour(high_vorticity, levels=[0.5], colors='yellow', linewidths=2)
+                ax4.set_title(f'Topological Features (β₁ = {betti_1})')
+                ax4.set_xlabel('x')
+                ax4.set_ylabel('y')
+            except Exception as e:
+                ax4.text(0.5, 0.5, f'TDA analysis failed:\n{str(e)}', 
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=ax4.transAxes, fontsize=12)
+                ax4.set_title('Topological Analysis (Failed)')
+        else:
+            ax4.text(0.5, 0.5, 'GUDHI not available\nfor topological analysis', 
+                    horizontalalignment='center', verticalalignment='center',
+                    transform=ax4.transAxes, fontsize=14)
+            ax4.set_title('Topological Analysis (N/A)')
+        
+        plt.tight_layout()
+        plt.show()
+
+def main():
+    """Main execution function with comprehensive testing."""
+    print("=== Topologically-Informed Turbulence Modeling Pipeline ===")
+    print(f"GUDHI available: {GUDHI_AVAILABLE}")
+    print(f"Grid resolution: {GRID_SIZE}x{GRID_SIZE}")
+    print(f"Reynolds number: {REYNOLDS_NUMBER}")
+    print()
+    
+    # Initialize benchmark
+    benchmark = LESBenchmark(grid_size=GRID_SIZE)
+    
+    # 1. Visualize initial flow fields
+    print("1. Visualizing flow fields...")
+    benchmark.visualize_flow_fields('taylor_green', t=0.5)
+    
+    # 2. Run time series analysis
+    print("\n2. Running time series analysis...")
+    results_tg = benchmark.run_time_series_analysis(50, 'taylor_green')
+    
+    # 3. Visualize time series results
+    print("\n3. Plotting results...")
+    benchmark.visualize_results(results_tg)
+    
+    # 4. Compare SGS models
+    print("\n4. Comparing SGS models...")
+    model_comparison = benchmark.compare_sgs_models('taylor_green')
+    
+    print("\nSGS Model Comparison:")
+    for model_name, model_data in model_comparison.items():
+        print(f"  {model_name.capitalize()}:")
+        print(f"    Mean viscosity: {model_data['mean_viscosity']:.2e}")
+        if 'betti_1' in model_data:
+            print(f"    Topological complexity (β₁): {model_data['betti_1']}")
+    
+    # 5. Performance summary
+    print(f"\n5. Performance Summary:")
+    if GUDHI_AVAILABLE:
+        final_betti = results_tg['betti_numbers'][-1]
+        final_nu_eff = results_tg['effective_viscosity'][-1]
+        viscosity_enhancement = (final_nu_eff - VISCOSITY_BASE) / VISCOSITY_BASE * 100
+        
+        print(f"   Final topological complexity: β₁ = {final_betti}")
+        print(f"   Final effective viscosity: {final_nu_eff:.2e}")
+        print(f"   Viscosity enhancement: {viscosity_enhancement:.1f}%")
+    else:
+        print("   Topological analysis not available (GUDHI required)")
+    
+    print(f"   Energy decay: {results_tg['kinetic_energy'][0]:.3f} → {results_tg['kinetic_energy'][-1]:.3f}")
+    print(f"   Enstrophy decay: {results_tg['enstrophy'][0]:.3f} → {results_tg['enstrophy'][-1]:.3f}")
+    
+    print("\n=== Analysis Complete ===")
+
+if __name__ == "__main__":
+    main()
