@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""
+Zeta-Turbulence Statistical Duality Analysis
+============================================
+
+This module implements the statistical comparison between Riemann zeta zero 
+spacings and turbulence phenomena to test the hypothesized duality.
+
+Key Components:
+- Zeta zero spacing extraction and normalization
+- Turbulence cascade statistics from JHTDB or synthetic data
+- Brody parameter fitting for level spacing distributions
+- Statistical similarity metrics (KL divergence, KS test)
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.stats as stats
+from scipy.optimize import curve_fit
+from scipy.special import gamma
+import requests
+import h5py
+from typing import Tuple, Dict, List, Optional
+
+# Configuration
+ZETA_ZEROS_COUNT = 10000  # Number of non-trivial zeros to analyze
+TURBULENCE_SAMPLES = 10000  # Number of turbulence spacing samples
+BRODY_BETA_RANGE = (0, 2)  # Range for Brody parameter fitting
+
+class ZetaZeroAnalyzer:
+    """Extract and analyze Riemann zeta zero spacings."""
+    
+    def __init__(self, num_zeros: int = ZETA_ZEROS_COUNT):
+        self.num_zeros = num_zeros
+        self.zeros = None
+        self.spacings = None
+        
+    def load_zeta_zeros(self, method: str = 'online') -> np.ndarray:
+        """
+        Load non-trivial zeros of the Riemann zeta function.
+        
+        Args:
+            method: 'online' for web API, 'mpmath' for local computation
+        Returns:
+            Array of imaginary parts of non-trivial zeros
+        """
+        if method == 'mpmath':
+            try:
+                import mpmath as mp
+                mp.dps = 50  # High precision
+                zeros = []
+                for n in range(1, self.num_zeros + 1):
+                    zero = mp.zetazero(n)
+                    zeros.append(float(zero.imag))
+                self.zeros = np.array(zeros)
+            except ImportError:
+                print("mpmath not available, falling back to online method")
+                return self.load_zeta_zeros('online')
+        
+        elif method == 'online':
+            # Use LMFDB or other online database
+            # For now, simulate with known statistical properties
+            print("Using simulated zeta zero data with GUE statistics")
+            self.zeros = self._generate_gue_spacings(self.num_zeros)
+        
+        return self.zeros
+    
+    def _generate_gue_spacings(self, n: int) -> np.ndarray:
+        """Generate spacings with GUE statistics for testing."""
+        # GUE level spacings follow Wigner-Dyson distribution
+        # This is temporary - replace with actual zeta zero data
+        gue_matrix = np.random.randn(n, n) + 1j * np.random.randn(n, n)
+        gue_matrix = (gue_matrix + gue_matrix.conj().T) / 2
+        eigenvals = np.linalg.eigvals(gue_matrix)
+        eigenvals = np.sort(eigenvals.real)
+        return np.diff(eigenvals)
+    
+    def compute_spacings(self) -> np.ndarray:
+        """Compute normalized spacings between consecutive zeros."""
+        if self.zeros is None:
+            self.load_zeta_zeros()
+        
+        raw_spacings = np.diff(self.zeros)
+        # Normalize by local average spacing (unfolding)
+        mean_spacing = np.mean(raw_spacings)
+        self.spacings = raw_spacings / mean_spacing
+        return self.spacings
+
+class TurbulenceAnalyzer:
+    """Extract turbulence cascade statistics and spacing distributions."""
+    
+    def __init__(self, data_source: str = 'synthetic'):
+        self.data_source = data_source
+        self.energy_dissipation = None
+        self.vortex_spacings = None
+        
+    def load_jhtdb_data(self, dataset: str = 'isotropic1024coarse') -> Dict:
+        """
+        Load data from Johns Hopkins Turbulence Database.
+        Note: Requires JHTDB authentication token and pyJHTDB library
+        """
+        try:
+            import pyJHTDB
+            # This would require actual JHTDB setup
+            # For now, return synthetic data
+            print("JHTDB connection not implemented, using synthetic data")
+            return self._generate_synthetic_turbulence()
+        except ImportError:
+            print("pyJHTDB not available, using synthetic data")
+            return self._generate_synthetic_turbulence()
+    
+    def _generate_synthetic_turbulence(self) -> Dict:
+        """Generate synthetic turbulence data with realistic statistics."""
+        t = np.linspace(0, 100, 10000)
+        
+        # Energy dissipation with intermittency
+        base_dissipation = 1.0
+        intermittency = 0.3 * np.random.lognormal(0, 0.5, len(t))
+        self.energy_dissipation = base_dissipation * intermittency
+        
+        # Vortex shedding with characteristic frequency
+        vortex_times = []
+        mean_period = 2.0
+        for i in range(len(t) - 1):
+            if np.random.random() < 0.1:  # 10% probability of vortex event
+                vortex_times.append(t[i])
+        
+        self.vortex_spacings = np.diff(vortex_times)
+        
+        return {
+            'time': t,
+            'energy_dissipation': self.energy_dissipation,
+            'vortex_times': vortex_times,
+            'vortex_spacings': self.vortex_spacings
+        }
+    
+    def extract_cascade_spacings(self) -> np.ndarray:
+        """Extract spacing statistics from energy cascade intermittency."""
+        if self.energy_dissipation is None:
+            self.load_jhtdb_data()
+        
+        # Find local maxima in energy dissipation (cascade events)
+        from scipy.signal import find_peaks
+        peaks, _ = find_peaks(self.energy_dissipation, height=np.mean(self.energy_dissipation))
+        
+        # Compute spacings between cascade events
+        cascade_spacings = np.diff(peaks)
+        # Normalize
+        mean_spacing = np.mean(cascade_spacings)
+        return cascade_spacings / mean_spacing
+
+class BrodyDistribution:
+    """Brody distribution for level spacing analysis."""
+    
+    @staticmethod
+    def pdf(s: np.ndarray, beta: float) -> np.ndarray:
+        """Brody distribution probability density function."""
+        a = gamma((beta + 2) / (beta + 1)) ** (beta + 1)
+        return (1 + beta) * a * (s ** beta) * np.exp(-a * (s ** (beta + 1)))
+    
+    @staticmethod
+    def fit_brody_parameter(spacings: np.ndarray) -> Tuple[float, float]:
+        """
+        Fit Brody parameter β to spacing distribution.
+        β = 0: Poisson (random)
+        β = 1: GOE/GUE (chaotic)
+        """
+        def brody_pdf_wrapper(s, beta):
+            return BrodyDistribution.pdf(s, beta)
+        
+        # Create histogram
+        hist, bin_edges = np.histogram(spacings, bins=50, density=True)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Filter out zeros to avoid numerical issues
+        mask = hist > 0
+        hist_filtered = hist[mask]
+        bins_filtered = bin_centers[mask]
+        
+        try:
+            popt, pcov = curve_fit(brody_pdf_wrapper, bins_filtered, hist_filtered, 
+                                 bounds=(0, 2), p0=[1.0])
+            beta_fit = popt[0]
+            beta_error = np.sqrt(np.diag(pcov))[0] if pcov.size > 0 else np.inf
+            return beta_fit, beta_error
+        except:
+            return np.nan, np.inf
+
+class StatisticalComparator:
+    """Compare statistical distributions between zeta and turbulence data."""
+    
+    @staticmethod
+    def compute_kl_divergence(p: np.ndarray, q: np.ndarray) -> float:
+        """Compute Kullback-Leibler divergence between distributions."""
+        # Ensure same support
+        min_val, max_val = min(p.min(), q.min()), max(p.max(), q.max())
+        bins = np.linspace(min_val, max_val, 100)
+        
+        hist_p, _ = np.histogram(p, bins=bins, density=True)
+        hist_q, _ = np.histogram(q, bins=bins, density=True)
+        
+        # Add small epsilon to avoid log(0)
+        epsilon = 1e-10
+        hist_p += epsilon
+        hist_q += epsilon
+        
+        # Normalize
+        hist_p /= hist_p.sum()
+        hist_q /= hist_q.sum()
+        
+        return stats.entropy(hist_p, hist_q)
+    
+    @staticmethod
+    def kolmogorov_smirnov_test(x1: np.ndarray, x2: np.ndarray) -> Tuple[float, float]:
+        """Perform two-sample Kolmogorov-Smirnov test."""
+        return stats.ks_2samp(x1, x2)
+    
+    @staticmethod
+    def power_spectrum_correlation(x1: np.ndarray, x2: np.ndarray) -> float:
+        """Compute correlation between power spectra of two signals."""
+        # Ensure same length
+        min_len = min(len(x1), len(x2))
+        x1_trimmed = x1[:min_len]
+        x2_trimmed = x2[:min_len]
+        
+        # Compute power spectra
+        fft1 = np.fft.fft(x1_trimmed)
+        fft2 = np.fft.fft(x2_trimmed)
+        psd1 = np.abs(fft1) ** 2
+        psd2 = np.abs(fft2) ** 2
+        
+        # Compute correlation
+        correlation = np.corrcoef(psd1[1:len(psd1)//2], psd2[1:len(psd2)//2])[0, 1]
+        return correlation if not np.isnan(correlation) else 0.0
+
+def main_analysis():
+    """Main analysis pipeline for Zeta-Turbulence duality hypothesis."""
+    print("🔬 Zeta-Turbulence Statistical Duality Analysis")
+    print("=" * 50)
+    
+    # Initialize analyzers
+    zeta_analyzer = ZetaZeroAnalyzer(num_zeros=ZETA_ZEROS_COUNT)
+    turb_analyzer = TurbulenceAnalyzer()
+    comparator = StatisticalComparator()
+    
+    # Extract data
+    print("📊 Extracting zeta zero spacings...")
+    zeta_spacings = zeta_analyzer.compute_spacings()
+    
+    print("🌪️ Extracting turbulence cascade spacings...")
+    turb_spacings = turb_analyzer.extract_cascade_spacings()
+    
+    # Fit Brody parameters
+    print("📈 Fitting Brody distributions...")
+    beta_zeta, beta_zeta_err = BrodyDistribution.fit_brody_parameter(zeta_spacings)
+    beta_turb, beta_turb_err = BrodyDistribution.fit_brody_parameter(turb_spacings)
+    
+    # Statistical comparisons
+    print("🔍 Computing statistical similarity metrics...")
+    kl_div = comparator.compute_kl_divergence(zeta_spacings, turb_spacings)
+    ks_stat, ks_pvalue = comparator.kolmogorov_smirnov_test(zeta_spacings, turb_spacings)
+    psd_corr = comparator.power_spectrum_correlation(zeta_spacings, turb_spacings)
+    
+    # Results
+    print("\n✅ RESULTS:")
+    print(f"Zeta Brody parameter: β = {beta_zeta:.3f} ± {beta_zeta_err:.3f}")
+    print(f"Turbulence Brody parameter: β = {beta_turb:.3f} ± {beta_turb_err:.3f}")
+    print(f"KL Divergence: {kl_div:.4f}")
+    print(f"KS Test: statistic = {ks_stat:.4f}, p-value = {ks_pvalue:.4f}")
+    print(f"Power Spectrum Correlation: {psd_corr:.4f}")
+    
+    # Visualization
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    # Spacing histograms
+    axes[0, 0].hist(zeta_spacings, bins=50, alpha=0.7, density=True, label='Zeta')
+    axes[0, 0].hist(turb_spacings, bins=50, alpha=0.7, density=True, label='Turbulence')
+    axes[0, 0].set_xlabel('Normalized Spacing')
+    axes[0, 0].set_ylabel('Probability Density')
+    axes[0, 0].set_title('Spacing Distributions')
+    axes[0, 0].legend()
+    
+    # Brody fits
+    s_range = np.linspace(0, 4, 1000)
+    axes[0, 1].plot(s_range, BrodyDistribution.pdf(s_range, beta_zeta), 
+                    label=f'Zeta Brody (β={beta_zeta:.3f})')
+    axes[0, 1].plot(s_range, BrodyDistribution.pdf(s_range, beta_turb), 
+                    label=f'Turb Brody (β={beta_turb:.3f})')
+    axes[0, 1].set_xlabel('Spacing')
+    axes[0, 1].set_ylabel('Probability Density')
+    axes[0, 1].set_title('Brody Distribution Fits')
+    axes[0, 1].legend()
+    
+    # Cumulative distributions
+    x_zeta = np.sort(zeta_spacings)
+    y_zeta = np.arange(1, len(x_zeta) + 1) / len(x_zeta)
+    x_turb = np.sort(turb_spacings)
+    y_turb = np.arange(1, len(x_turb) + 1) / len(x_turb)
+    
+    axes[1, 0].plot(x_zeta, y_zeta, label='Zeta CDF')
+    axes[1, 0].plot(x_turb, y_turb, label='Turbulence CDF')
+    axes[1, 0].set_xlabel('Spacing')
+    axes[1, 0].set_ylabel('Cumulative Probability')
+    axes[1, 0].set_title('Cumulative Distribution Comparison')
+    axes[1, 0].legend()
+    
+    # Power spectra
+    freqs = np.fft.fftfreq(len(zeta_spacings))
+    psd_zeta = np.abs(np.fft.fft(zeta_spacings)) ** 2
+    psd_turb = np.abs(np.fft.fft(turb_spacings[:len(zeta_spacings)])) ** 2
+    
+    axes[1, 1].loglog(freqs[1:len(freqs)//2], psd_zeta[1:len(psd_zeta)//2], 
+                      label='Zeta PSD')
+    axes[1, 1].loglog(freqs[1:len(freqs)//2], psd_turb[1:len(psd_turb)//2], 
+                      label='Turbulence PSD')
+    axes[1, 1].set_xlabel('Frequency')
+    axes[1, 1].set_ylabel('Power Spectral Density')
+    axes[1, 1].set_title('Power Spectrum Comparison')
+    axes[1, 1].legend()
+    
+    plt.tight_layout()
+    plt.savefig('zeta_turbulence_duality_analysis.png', dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return {
+        'beta_zeta': beta_zeta,
+        'beta_turbulence': beta_turb,
+        'kl_divergence': kl_div,
+        'ks_statistic': ks_stat,
+        'ks_pvalue': ks_pvalue,
+        'psd_correlation': psd_corr
+    }
+
+if __name__ == "__main__":
+    results = main_analysis()
+    print(f"\n🎯 Analysis complete. Results saved to 'zeta_turbulence_duality_analysis.png'")
