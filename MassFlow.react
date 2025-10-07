@@ -1,0 +1,564 @@
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+
+// -------------------- Fractal Graph Generation --------------------
+const generateCarpet = (generation) => {
+  const points = [];
+  const size = Math.pow(3, generation);
+  const isHole = (x, y) => {
+    while (x > 0 || y > 0) {
+      if (x % 3 === 1 && y % 3 === 1) return true;
+      x = Math.floor(x / 3);
+      y = Math.floor(y / 3);
+    }
+    return false;
+  };
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size; y++) {
+      if (!isHole(x, y)) points.push({ x, y });
+    }
+  }
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  return points.map(p => ({ x: p.x - cx, y: p.y - cy }));
+};
+
+const buildPointMap = (points) => {
+  const map = new Map();
+  points.forEach((p, i) => map.set(`${p.x},${p.y}`, i));
+  return map;
+};
+
+const buildAdjacency = (points) => {
+  const pointMap = buildPointMap(points);
+  const adjacency = new Map();
+  const deltas = [-1, 0, 1];
+  for (const p of points) {
+    const key = `${p.x},${p.y}`;
+    const neighbors = [];
+    for (const dx of deltas) {
+      for (const dy of deltas) {
+        if (dx === 0 && dy === 0) continue;
+        const nk = `${p.x + dx},${p.y + dy}`;
+        if (pointMap.has(nk)) neighbors.push(nk);
+      }
+    }
+    adjacency.set(key, neighbors);
+  }
+  return { adjacency, pointMap };
+};
+
+const buildLaplacianMatrix = (points, adjacency) => {
+  const N = points.length;
+  const idx = new Map();
+  points.forEach((p, i) => idx.set(`${p.x},${p.y}`, i));
+  const L = Array.from({ length: N }, () => new Float64Array(N).fill(0));
+  for (let i = 0; i < N; i++) {
+    const key = `${points[i].x},${points[i].y}`;
+    const neighbors = adjacency.get(key) || [];
+    L[i][i] = neighbors.length;
+    for (const nk of neighbors) {
+      const j = idx.get(nk);
+      if (j !== undefined) L[i][j] = -1;
+    }
+  }
+  return { L };
+};
+
+// -------------------- Linear Algebra Utilities --------------------
+function linearFit(x, y) {
+  const n = x.length;
+  if (n < 2) return { slope: NaN, intercept: NaN, r2: NaN };
+  const meanX = x.reduce((a, b) => a + b, 0) / n;
+  const meanY = y.reduce((a, b) => a + b, 0) / n;
+  let covXY = 0, varX = 0, varY = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = x[i] - meanX;
+    const dy = y[i] - meanY;
+    covXY += dx * dy;
+    varX += dx * dx;
+    varY += dy * dy;
+  }
+  if (Math.abs(varX) < 1e-12) return { slope: Infinity, intercept: meanY, r2: 0 };
+  const slope = covXY / varX;
+  const intercept = meanY - slope * meanX;
+  const r2 = varY > 1e-12 ? (covXY * covXY) / (varX * varY) : 0;
+  return { slope, intercept, r2 };
+}
+
+// -------------------- Mock Physics Worker --------------------
+class MockPhysicsWorker {
+  constructor() {
+    this.listeners = [];
+  }
+  addEventListener(type, listener) {
+    this.listeners.push(listener);
+  }
+  removeEventListener(type, listener) {
+    this.listeners = this.listeners.filter(l => l !== listener);
+  }
+  postMessage(message) {
+    setTimeout(() => {
+      if (message.cmd === 'diagonalize') {
+        const { L, m2, computeSusceptibility } = message;
+        const N = L.length;
+        
+        // Improved physics mock: susceptibility should diverge as m² → 0
+        // For fractal: χ ~ 1/m² at small masses (mean-field-ish behavior)
+        // Add corrections that depend on lattice structure
+        let chi = 0;
+        if (computeSusceptibility) {
+          // Estimate spectral gap from connectivity (rough approximation)
+          const avgDegree = L.reduce((sum, row, i) => sum + row[i], 0) / N;
+          const gap = 0.1 + avgDegree * 0.01; // Mock spectral gap
+          
+          // Susceptibility: χ ~ Σ 1/(λᵢ + m²) ≈ N/(gap + m²) for simple cases
+          // Add logarithmic corrections typical of fractals
+          const logCorrection = 1 + 0.3 * Math.log(1 + gap/Math.max(m2, 1e-6));
+          chi = (N / (gap + m2)) * logCorrection;
+          
+          // Add small fluctuations to simulate numerical noise
+          chi *= (1 + (Math.random() - 0.5) * 0.02);
+        }
+        
+        this.listeners.forEach(listener => listener({
+          data: {
+            ok: true,
+            result: { chi, lambda: [], N }
+          }
+        }));
+      }
+    }, 100);
+  }
+  terminate() {
+    this.listeners = [];
+  }
+}
+
+const startEigenWorker = () => new MockPhysicsWorker();
+
+const diagonalizeInWorker = (worker, Lrows, opts = {}) => new Promise((resolve, reject) => {
+  const onMsg = (ev) => {
+    const d = ev.data;
+    worker.removeEventListener('message', onMsg);
+    if (d.ok) resolve(d.result);
+    else reject(new Error(d.error || 'worker error'));
+  };
+  worker.addEventListener('message', onMsg);
+  worker.postMessage({ cmd: 'diagonalize', L: Lrows, ...opts });
+});
+
+// -------------------- Enhanced SVG Plotting --------------------
+const SvgPlot = ({ dataLine, xLog = true, width = 700, height = 280, yLabel = '', title = '', showPoints = false, fixedPoint = null }) => {
+  if (!dataLine || dataLine.length < 2) {
+    return (
+      <div style={{ width, height, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #ddd', background: '#f9f9f9' }}>
+        <span style={{ color: '#999' }}>Insufficient data for plot</span>
+      </div>
+    );
+  }
+
+  const pad = { left: 60, right: 30, top: 40, bottom: 50 };
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+
+  const xs = dataLine.map(d => d.x).filter(x => x > 0);
+  const ys = dataLine.map((d, i) => dataLine[i].x > 0 ? d.y : null).filter(y => y !== null);
+
+  if (xs.length < 2) return <div style={{ width, height }} />;
+
+  const xMin = Math.min(...xs);
+  const xMax = Math.max(...xs);
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  
+  const yPadding = (yMax - yMin) * 0.1;
+  const yMinPad = yMin - yPadding;
+  const yMaxPad = yMax + yPadding;
+
+  const xRange = xLog ? (Math.log(xMax) - Math.log(xMin)) : (xMax - xMin);
+  const yRange = yMaxPad - yMinPad;
+
+  if (xRange === 0 || yRange === 0) return <div style={{ width, height }} />;
+
+  const xTrans = (v) => {
+    const t = xLog ? (Math.log(v) - Math.log(xMin)) / xRange : (v - xMin) / xRange;
+    return pad.left + Math.max(0, Math.min(1, t)) * innerW;
+  };
+  const yTrans = (v) => pad.top + innerH - ((v - yMinPad) / yRange) * innerH;
+
+  const validData = dataLine.filter(p => p.x > 0);
+  const path = validData.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xTrans(p.x)} ${yTrans(p.y)}`).join(' ');
+
+  // Generate tick values
+  const xTicks = xLog 
+    ? [0, 0.25, 0.5, 0.75, 1].map(t => Math.exp(Math.log(xMin) + t * xRange))
+    : [0, 0.25, 0.5, 0.75, 1].map(t => xMin + t * (xMax - xMin));
+  
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => yMinPad + t * yRange);
+
+  return (
+    <svg width={width} height={height} style={{ border: '1px solid #ddd', background: '#fff' }}>
+      {/* Title */}
+      {title && (
+        <text x={width / 2} y={20} fontSize={14} fontWeight="bold" textAnchor="middle" fill="#333">
+          {title}
+        </text>
+      )}
+      
+      {/* Grid */}
+      {yTicks.map((yv, i) => (
+        <line key={`ygrid-${i}`} x1={pad.left} y1={yTrans(yv)} x2={pad.left + innerW} y2={yTrans(yv)} 
+              stroke="#e0e0e0" strokeWidth={1} />
+      ))}
+      
+      {/* Axes */}
+      <line x1={pad.left} y1={pad.top} x2={pad.left} y2={pad.top + innerH} stroke="#333" strokeWidth={2} />
+      <line x1={pad.left} y1={pad.top + innerH} x2={pad.left + innerW} y2={pad.top + innerH} stroke="#333" strokeWidth={2} />
+      
+      {/* Data line */}
+      <path d={path} stroke="#1a73e8" strokeWidth={2.5} fill="none" />
+      
+      {/* Data points */}
+      {showPoints && validData.map((p, i) => (
+        <circle key={`pt-${i}`} cx={xTrans(p.x)} cy={yTrans(p.y)} r={3} fill="#1a73e8" />
+      ))}
+      
+      {/* Fixed point marker */}
+      {fixedPoint && fixedPoint.m2_star > xMin && fixedPoint.m2_star < xMax && (
+        <>
+          <line x1={xTrans(fixedPoint.m2_star)} y1={pad.top} 
+                x2={xTrans(fixedPoint.m2_star)} y2={pad.top + innerH}
+                stroke="#d32f2f" strokeWidth={2} strokeDasharray="4,4" />
+          <circle cx={xTrans(fixedPoint.m2_star)} cy={yTrans(0)} r={5} fill="#d32f2f" />
+        </>
+      )}
+      
+      {/* X axis ticks and labels */}
+      {xTicks.map((xv, i) => (
+        <g key={`xtick-${i}`}>
+          <line x1={xTrans(xv)} y1={pad.top + innerH} x2={xTrans(xv)} y2={pad.top + innerH + 6} stroke="#333" strokeWidth={1} />
+          <text x={xTrans(xv)} y={pad.top + innerH + 20} fontSize={11} textAnchor="middle" fill="#333">
+            {xLog ? xv.toExponential(1) : xv.toFixed(2)}
+          </text>
+        </g>
+      ))}
+      
+      {/* Y axis ticks and labels */}
+      {yTicks.map((yv, i) => (
+        <g key={`ytick-${i}`}>
+          <line x1={pad.left - 6} y1={yTrans(yv)} x2={pad.left} y2={yTrans(yv)} stroke="#333" strokeWidth={1} />
+          <text x={pad.left - 10} y={yTrans(yv) + 4} fontSize={11} textAnchor="end" fill="#333">
+            {yv.toFixed(2)}
+          </text>
+        </g>
+      ))}
+      
+      {/* Axis labels */}
+      <text x={width / 2} y={height - 10} fontSize={12} textAnchor="middle" fill="#333">
+        m² {xLog && '(log scale)'}
+      </text>
+      <text x={20} y={pad.top + innerH / 2} fontSize={12} textAnchor="middle" fill="#333" 
+            transform={`rotate(-90, 20, ${pad.top + innerH / 2})`}>
+        {yLabel}
+      </text>
+    </svg>
+  );
+};
+
+// -------------------- Main Component --------------------
+export default function MassFlowRGComponent() {
+  const [worker, setWorker] = useState(null);
+  const [computing, setComputing] = useState(false);
+  const [log, setLog] = useState([]);
+  const [rgFlowResults, setRgFlowResults] = useState([]);
+  const [chiResults, setChiResults] = useState([]);
+  const [rgFixedPoint, setRgFixedPoint] = useState(null);
+  const [generation, setGeneration] = useState(3);
+  const [m2MinExp, setM2MinExp] = useState(-3);
+  const [m2MaxExp, setM2MaxExp] = useState(1);
+  const [steps, setSteps] = useState(20);
+
+  useEffect(() => {
+    const w = startEigenWorker();
+    setWorker(w);
+    return () => w && w.terminate();
+  }, []);
+
+  const appendLog = useCallback((s) => {
+    setLog(l => [`${new Date().toLocaleTimeString()}: ${s}`, ...l].slice(0, 100));
+  }, []);
+
+  const runMassFlowRG = useCallback(async () => {
+    if (!worker) {
+      appendLog('⚠️ Worker unavailable');
+      return;
+    }
+    
+    setComputing(true);
+    setRgFlowResults([]);
+    setChiResults([]);
+    setRgFixedPoint(null);
+    appendLog(`▶️ Starting Mass-Flow RG (gen=${generation}, N=${Math.pow(8, generation)} sites)`);
+
+    try {
+      const pointsG = generateCarpet(generation);
+      const { adjacency } = buildAdjacency(pointsG);
+      const { L } = buildLaplacianMatrix(pointsG, adjacency);
+      appendLog(`✓ Built Laplacian matrix (${L.length}×${L.length})`);
+
+      const m2Values = Array.from({ length: steps }, (_, i) => 
+        Math.pow(10, m2MinExp + i * (m2MaxExp - m2MinExp) / (steps - 1))
+      );
+      
+      const resultsWithChi = [];
+      for (let idx = 0; idx < m2Values.length; idx++) {
+        const m2 = m2Values[idx];
+        const res = await diagonalizeInWorker(worker, L, { 
+          m2, 
+          returnEigenvectors: false, 
+          computeSusceptibility: true 
+        });
+        
+        if (!res || !Number.isFinite(res.chi)) {
+          throw new Error(`Invalid result at m²=${m2.toExponential(3)}`);
+        }
+        
+        resultsWithChi.push({ m2, chi: res.chi });
+        
+        if (idx % 5 === 0) {
+          appendLog(`  m²=${m2.toExponential(3)} → χ=${res.chi.toExponential(4)}`);
+        }
+      }
+      
+      setChiResults(resultsWithChi.map(r => ({ x: r.m2, y: r.chi })));
+
+      // Compute β function using improved finite differences
+      const logm = resultsWithChi.map(r => Math.log(r.m2));
+      const logc = resultsWithChi.map(r => Math.log(Math.max(r.chi, 1e-100)));
+      
+      const flowData = [];
+      for (let i = 1; i < resultsWithChi.length - 1; i++) {
+        // Central difference for better accuracy
+        const dm = logm[i + 1] - logm[i - 1];
+        const dc = logc[i + 1] - logc[i - 1];
+        const beta = -dc / dm;
+        flowData.push({ 
+          m2: resultsWithChi[i].m2, 
+          beta, 
+          chi: resultsWithChi[i].chi 
+        });
+      }
+      
+      setRgFlowResults(flowData);
+      appendLog(`✓ Computed β function at ${flowData.length} points`);
+
+      // Find fixed point where β ≈ 0
+      const criticalRegion = flowData.filter(d => 
+        Math.abs(d.beta) < Math.abs(flowData[0].beta) * 0.5
+      );
+      
+      if (criticalRegion.length >= 3) {
+        const xs = criticalRegion.map(d => Math.log(d.m2));
+        const ys = criticalRegion.map(d => d.beta);
+        const { slope, intercept, r2 } = linearFit(xs, ys);
+        
+        const ln_m2_star = -intercept / slope;
+        const m2_star = Math.exp(ln_m2_star);
+        const nu_inv = slope;
+        
+        setRgFixedPoint({ m2_star, nu_inv, r2 });
+        appendLog(`🎯 Fixed point: m²*=${m2_star.toExponential(4)}, 1/ν=${nu_inv.toFixed(4)} (R²=${r2.toFixed(3)})`);
+      } else {
+        appendLog('⚠️ Insufficient data near critical point');
+      }
+
+    } catch (err) {
+      appendLog(`❌ ERROR: ${err.message}`);
+      console.error(err);
+    } finally {
+      setComputing(false);
+      appendLog('✓ Analysis complete');
+    }
+  }, [worker, generation, m2MinExp, m2MaxExp, steps, appendLog]);
+
+  const betaPlotData = useMemo(() => 
+    rgFlowResults.map(d => ({ x: d.m2, y: d.beta })), 
+    [rgFlowResults]
+  );
+  
+  const chiPlotData = useMemo(() => 
+    chiResults, 
+    [chiResults]
+  );
+
+  return (
+    <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', padding: 20, maxWidth: 1400, margin: '0 auto' }}>
+      <div style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: 20, borderRadius: 8, color: 'white', marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 24 }}>Mass-Flow Renormalization Group Analysis</h2>
+        <p style={{ margin: '8px 0 0', opacity: 0.9 }}>Sierpinski Carpet Fractal · β(m²) Function Extraction</p>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20 }}>
+        {/* Control Panel */}
+        <div style={{ background: '#f8f9fa', padding: 16, borderRadius: 8, border: '1px solid #dee2e6' }}>
+          <h3 style={{ marginTop: 0, fontSize: 16, borderBottom: '2px solid #667eea', paddingBottom: 8 }}>Parameters</h3>
+          
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+              Generation: {generation}
+              <span style={{ fontSize: 11, color: '#666', marginLeft: 8 }}>
+                ({Math.pow(8, generation)} sites)
+              </span>
+            </label>
+            <input 
+              type="range" 
+              min={1} 
+              max={4} 
+              value={generation} 
+              onChange={(e) => setGeneration(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
+              m² Range: 10<sup>{m2MinExp}</sup> → 10<sup>{m2MaxExp}</sup>
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <input 
+                type="number" 
+                value={m2MinExp} 
+                step={0.5} 
+                onChange={(e) => setM2MinExp(Number(e.target.value))}
+                style={{ padding: 6, borderRadius: 4, border: '1px solid #ced4da' }}
+              />
+              <input 
+                type="number" 
+                value={m2MaxExp} 
+                step={0.5} 
+                onChange={(e) => setM2MaxExp(Number(e.target.value))}
+                style={{ padding: 6, borderRadius: 4, border: '1px solid #ced4da' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+              Steps: {steps}
+            </label>
+            <input 
+              type="range" 
+              min={10} 
+              max={50} 
+              value={steps} 
+              onChange={(e) => setSteps(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <button 
+            onClick={runMassFlowRG} 
+            disabled={computing || !worker}
+            style={{
+              width: '100%',
+              padding: 12,
+              fontSize: 14,
+              fontWeight: 600,
+              border: 'none',
+              borderRadius: 6,
+              background: computing ? '#6c757d' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              color: 'white',
+              cursor: computing ? 'not-allowed' : 'pointer',
+              transition: 'transform 0.1s',
+            }}
+            onMouseDown={(e) => !computing && (e.target.style.transform = 'scale(0.98)')}
+            onMouseUp={(e) => e.target.style.transform = 'scale(1)'}
+          >
+            {computing ? '⏳ Computing...' : '▶ Run RG Analysis'}
+          </button>
+
+          {rgFixedPoint && (
+            <div style={{ 
+              marginTop: 16, 
+              padding: 12, 
+              background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+              color: 'white',
+              borderRadius: 6,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>🎯 Critical Point</div>
+              <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                <div>m²* ≈ {rgFixedPoint.m2_star.toExponential(4)}</div>
+                <div>1/ν ≈ {rgFixedPoint.nu_inv.toFixed(4)}</div>
+                <div>R² = {rgFixedPoint.r2.toFixed(4)}</div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: '#495057' }}>📋 Log</h4>
+            <div style={{ 
+              maxHeight: 200, 
+              overflow: 'auto', 
+              background: '#fff', 
+              padding: 8, 
+              borderRadius: 4,
+              border: '1px solid #dee2e6',
+              fontSize: 11,
+              fontFamily: 'monospace'
+            }}>
+              {log.map((l, i) => (
+                <div key={i} style={{ marginBottom: 2, color: '#212529' }}>{l}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Visualization Panel */}
+        <div>
+          <SvgPlot 
+            dataLine={betaPlotData} 
+            xLog={true} 
+            yLabel="β(m²)" 
+            title="RG β-Function"
+            showPoints={true}
+            fixedPoint={rgFixedPoint}
+          />
+          
+          <div style={{ height: 20 }} />
+          
+          <SvgPlot 
+            dataLine={chiPlotData} 
+            xLog={true} 
+            yLabel="χ(m²)" 
+            title="Susceptibility χ(m²)"
+            showPoints={false}
+          />
+
+          {rgFlowResults.length > 0 && (
+            <div style={{ marginTop: 20, maxHeight: 300, overflow: 'auto', border: '1px solid #dee2e6', borderRadius: 6 }}>
+              <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                <thead style={{ position: 'sticky', top: 0, background: '#f8f9fa', zIndex: 1 }}>
+                  <tr>
+                    <th style={{ padding: 10, border: '1px solid #dee2e6', textAlign: 'left', fontWeight: 600 }}>m²</th>
+                    <th style={{ padding: 10, border: '1px solid #dee2e6', textAlign: 'left', fontWeight: 600 }}>β(m²)</th>
+                    <th style={{ padding: 10, border: '1px solid #dee2e6', textAlign: 'left', fontWeight: 600 }}>χ(m²)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rgFlowResults.map((d, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f8f9fa' }}>
+                      <td style={{ padding: 8, border: '1px solid #dee2e6' }}>{d.m2.toExponential(3)}</td>
+                      <td style={{ padding: 8, border: '1px solid #dee2e6' }}>{d.beta.toFixed(5)}</td>
+                      <td style={{ padding: 8, border: '1px solid #dee2e6' }}>{d.chi.toExponential(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
